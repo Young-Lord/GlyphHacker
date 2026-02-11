@@ -1,9 +1,11 @@
 package moe.lyniko.glyphhacker.overlay
 
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.graphics.PixelFormat
@@ -16,6 +18,7 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
@@ -27,6 +30,8 @@ import kotlinx.coroutines.launch
 import moe.lyniko.glyphhacker.MainActivity
 import moe.lyniko.glyphhacker.R
 import moe.lyniko.glyphhacker.capture.CaptureForegroundService
+import moe.lyniko.glyphhacker.data.CommandOpenPrimaryAction
+import moe.lyniko.glyphhacker.data.CommandOpenSecondaryAction
 import moe.lyniko.glyphhacker.data.RuntimeStateBus
 import moe.lyniko.glyphhacker.data.SettingsRepository
 import moe.lyniko.glyphhacker.glyph.GlyphPhase
@@ -39,9 +44,14 @@ class OverlayControlService : Service() {
     private var rootView: View? = null
     private var statusView: TextView? = null
     private var toggleView: TextView? = null
+    private var commandOpenPrimaryView: TextView? = null
+    private var commandOpenSecondaryView: TextView? = null
     private var overlayParams: WindowManager.LayoutParams? = null
     private var captureRunning: Boolean = false
     private var recognitionEnabled: Boolean = true
+    private var commandOpenPrimaryAction: CommandOpenPrimaryAction = CommandOpenPrimaryAction.SEND_SPEED
+    private var commandOpenSecondaryAction: CommandOpenSecondaryAction = CommandOpenSecondaryAction.MEDIUM
+    private var commandOpenHideSlowOption: Boolean = false
 
     override fun onCreate() {
         super.onCreate()
@@ -95,9 +105,14 @@ class OverlayControlService : Service() {
         val padding = resources.displayMetrics.density.times(6f).toInt()
         val toggleMinWidth = resources.displayMetrics.density.times(34f).toInt()
         val root = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
+            orientation = LinearLayout.VERTICAL
             setBackgroundColor(0xB30F1420.toInt())
             setPadding(padding, padding, padding, padding)
+            gravity = Gravity.CENTER_HORIZONTAL
+        }
+
+        val topRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
 
@@ -117,8 +132,16 @@ class OverlayControlService : Service() {
             setOnClickListener {
                 if (!captureRunning) {
                     if (shouldUseAccessibilityScreenshotCapture()) {
-                        RuntimeStateBus.setRecognitionEnabled(true)
-                        CaptureForegroundService.startAccessibility(this@OverlayControlService)
+                        if (isAccessibilityServiceEnabled()) {
+                            RuntimeStateBus.setRecognitionEnabled(true)
+                            CaptureForegroundService.startAccessibility(this@OverlayControlService)
+                        } else {
+                            Toast.makeText(
+                                this@OverlayControlService,
+                                "辅助功能未授权，无法开始识别，请先在系统设置中开启",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
                     } else {
                         requestProjectionPermission(MainActivity.PROJECTION_ACTION_START_CAPTURE)
                     }
@@ -148,9 +171,56 @@ class OverlayControlService : Service() {
             }
         }
 
-        root.addView(toggleButton)
-        root.addView(status)
-        root.addView(closeButton)
+        val commandPrimaryButton = TextView(this).apply {
+            textSize = 12f
+            setTypeface(Typeface.MONOSPACE, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setPadding(padding, padding / 3, padding, padding / 3)
+            setOnClickListener {
+                serviceScope.launch {
+                    val next = commandOpenPrimaryAction.next()
+                    settingsRepository.updateCommandOpenPrimaryAction(next)
+                }
+            }
+        }
+
+        val commandSecondaryButton = TextView(this).apply {
+            textSize = 12f
+            setTypeface(Typeface.MONOSPACE, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setPadding(padding, padding / 3, padding, padding / 3)
+            setOnClickListener {
+                serviceScope.launch {
+                    val next = commandOpenSecondaryAction.next(commandOpenHideSlowOption)
+                    settingsRepository.updateCommandOpenSecondaryAction(next)
+                }
+            }
+        }
+
+        topRow.addView(toggleButton)
+        topRow.addView(status)
+        topRow.addView(closeButton)
+
+        val commandRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(0, padding / 2, 0, 0)
+        }
+        val commandPrimaryLayoutParams = LinearLayout.LayoutParams(
+            0,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            1f,
+        )
+        val commandSecondaryLayoutParams = LinearLayout.LayoutParams(
+            0,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            1f,
+        )
+        commandRow.addView(commandPrimaryButton, commandPrimaryLayoutParams)
+        commandRow.addView(commandSecondaryButton, commandSecondaryLayoutParams)
+
+        root.addView(topRow)
+        root.addView(commandRow)
 
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -169,7 +239,11 @@ class OverlayControlService : Service() {
         rootView = root
         statusView = status
         toggleView = toggleButton
+        commandOpenPrimaryView = commandPrimaryButton
+        commandOpenSecondaryView = commandSecondaryButton
         overlayParams = params
+        applyCommandOpenActionState(commandPrimaryButton, commandOpenPrimaryAction.label)
+        applyCommandOpenActionState(commandSecondaryButton, commandOpenSecondaryAction.label)
     }
 
     private fun observeRuntimeState() {
@@ -202,6 +276,11 @@ class OverlayControlService : Service() {
         view.setTextColor(if (running) 0xFF9FFFC4.toInt() else 0xFFFFD08A.toInt())
     }
 
+    private fun applyCommandOpenActionState(view: TextView, label: String) {
+        view.text = label
+        view.setTextColor(0xFFB8E2FF.toInt())
+    }
+
     private fun requestProjectionPermission(action: String) {
         val intent = Intent(this, MainActivity::class.java).apply {
             addFlags(
@@ -216,8 +295,16 @@ class OverlayControlService : Service() {
 
     private fun restartCaptureService() {
         if (shouldUseAccessibilityScreenshotCapture()) {
-            RuntimeStateBus.setRecognitionEnabled(true)
-            CaptureForegroundService.restartAccessibility(this)
+            if (isAccessibilityServiceEnabled()) {
+                RuntimeStateBus.setRecognitionEnabled(true)
+                CaptureForegroundService.restartAccessibility(this)
+            } else {
+                Toast.makeText(
+                    this,
+                    "辅助功能未授权，无法开始识别，请先在系统设置中开启",
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
         } else {
             requestProjectionPermission(MainActivity.PROJECTION_ACTION_RESTART_CAPTURE)
         }
@@ -230,12 +317,28 @@ class OverlayControlService : Service() {
         return settingsRepository.settingsFlow.value.useAccessibilityScreenshotCapture
     }
 
+    private fun isAccessibilityServiceEnabled(): Boolean {
+        val manager = getSystemService(Context.ACCESSIBILITY_SERVICE) as android.view.accessibility.AccessibilityManager
+        val services = manager.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+        val target = ComponentName(this, moe.lyniko.glyphhacker.accessibility.GlyphAccessibilityService::class.java).flattenToString()
+        return services.any { info ->
+            val serviceName = ComponentName(info.resolveInfo.serviceInfo.packageName, info.resolveInfo.serviceInfo.name).flattenToString()
+            serviceName == target
+        }
+    }
+
     private fun observeOverlayPosition() {
         serviceScope.launch {
             settingsRepository.settingsFlow.collectLatest { settings ->
                 val params = overlayParams ?: return@collectLatest
                 val wm = windowManager ?: return@collectLatest
                 val root = rootView ?: return@collectLatest
+
+                commandOpenPrimaryAction = settings.commandOpenPrimaryAction
+                commandOpenSecondaryAction = settings.commandOpenSecondaryAction
+                commandOpenHideSlowOption = settings.commandOpenHideSlowOption
+                commandOpenPrimaryView?.let { applyCommandOpenActionState(it, commandOpenPrimaryAction.label) }
+                commandOpenSecondaryView?.let { applyCommandOpenActionState(it, commandOpenSecondaryAction.label) }
 
                 val width = resources.displayMetrics.widthPixels
                 val height = resources.displayMetrics.heightPixels

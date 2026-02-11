@@ -29,6 +29,11 @@ class SettingsRepository(context: Context) {
         refresh()
     }
 
+    suspend fun updateAutoGrantAccessibilityViaShizukuOnLaunch(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_AUTO_GRANT_ACCESSIBILITY_VIA_SHIZUKU_ON_LAUNCH, enabled).apply()
+        refresh()
+    }
+
     suspend fun updateFrameIntervalMs(value: Long) {
         prefs.edit().putLong(KEY_FRAME_INTERVAL_MS, value.coerceIn(120L, 1000L)).apply()
         refresh()
@@ -79,6 +84,11 @@ class SettingsRepository(context: Context) {
         refresh()
     }
 
+    suspend fun updateGlyphDisplayTopBarsMinLuma(value: Float) {
+        prefs.edit().putFloat(KEY_GLYPH_DISPLAY_TOP_BARS_MIN_LUMA, value.coerceIn(0f, 40f)).apply()
+        refresh()
+    }
+
     suspend fun updateGoColorDeltaThreshold(value: Float) {
         prefs.edit().putFloat(KEY_GO_COLOR_DELTA, value.coerceIn(1f, 80f)).apply()
         refresh()
@@ -125,12 +135,43 @@ class SettingsRepository(context: Context) {
     }
 
     suspend fun updateDrawEdgeDurationMs(value: Long) {
-        prefs.edit().putLong(KEY_DRAW_EDGE_MS, value.coerceIn(15L, 220L)).apply()
+        prefs.edit().putLong(KEY_DRAW_EDGE_MS, value.coerceIn(15L, 500L)).apply()
         refresh()
     }
 
     suspend fun updateDrawGlyphGapMs(value: Long) {
-        prefs.edit().putLong(KEY_DRAW_GAP_MS, value.coerceIn(0L, 300L)).apply()
+        prefs.edit().putLong(KEY_DRAW_GAP_MS, value.coerceIn(0L, 1000L)).apply()
+        refresh()
+    }
+
+    suspend fun updateCommandOpenPrimaryAction(value: CommandOpenPrimaryAction) {
+        prefs.edit().putString(KEY_COMMAND_OPEN_PRIMARY_ACTION, value.name).apply()
+        refresh()
+    }
+
+    suspend fun updateCommandOpenSecondaryAction(value: CommandOpenSecondaryAction) {
+        val hideSlow = _settingsFlow.value.commandOpenHideSlowOption
+        val safeValue = if (hideSlow && value == CommandOpenSecondaryAction.SLOW) {
+            CommandOpenSecondaryAction.MEDIUM
+        } else {
+            value
+        }
+        prefs.edit().putString(KEY_COMMAND_OPEN_SECONDARY_ACTION, safeValue.name).apply()
+        refresh()
+    }
+
+    suspend fun updateCommandOpenHideSlowOption(hide: Boolean) {
+        val current = _settingsFlow.value
+        val secondary = if (hide && current.commandOpenSecondaryAction == CommandOpenSecondaryAction.SLOW) {
+            CommandOpenSecondaryAction.MEDIUM
+        } else {
+            current.commandOpenSecondaryAction
+        }
+        prefs.edit().apply {
+            putBoolean(KEY_COMMAND_OPEN_HIDE_SLOW_OPTION, hide)
+            putString(KEY_COMMAND_OPEN_SECONDARY_ACTION, secondary.name)
+            apply()
+        }
         refresh()
     }
 
@@ -231,6 +272,10 @@ class SettingsRepository(context: Context) {
             val config = root.optJSONObject("config") ?: root
             val mode = config.optString("recognitionMode", RecognitionMode.EDGE_SET.name).toRecognitionMode()
             val useAccessibilityScreenshotCapture = config.optBoolean("useAccessibilityScreenshotCapture", false)
+            val autoGrantAccessibilityViaShizukuOnLaunch = config.optBoolean(
+                "autoGrantAccessibilityViaShizukuOnLaunch",
+                false,
+            )
             val frameInterval = config.optLong("frameIntervalMs", 300L)
             val goInterval = config.optLong("goCheckIntervalMs", 90L)
             val debugPlaybackSpeed = config.optDouble("debugPlaybackSpeed", 1.0).toFloat()
@@ -241,6 +286,7 @@ class SettingsRepository(context: Context) {
             val templateThreshold = config.optDouble("startTemplateThreshold", 0.84).toFloat()
             val commandOpenMaxLuma = config.optDouble("commandOpenMaxLuma", 1.0).toFloat()
             val glyphDisplayMinLuma = config.optDouble("glyphDisplayMinLuma", 10.0).toFloat()
+            val glyphDisplayTopBarsMinLuma = config.optDouble("glyphDisplayTopBarsMinLuma", 1.0).toFloat()
             val goColorDelta = config.optDouble("goColorDeltaThreshold", 18.0).toFloat()
             val countdownVisibleThreshold = config.optDouble(
                 "countdownVisibleThreshold",
@@ -250,8 +296,24 @@ class SettingsRepository(context: Context) {
                 "progressVisibleThreshold",
                 config.optDouble("readyBlackThresholdLuma", 20.0),
             ).toFloat()
-            val drawEdgeMs = config.optLong("drawEdgeDurationMs", 70L)
-            val drawGapMs = config.optLong("drawGlyphGapMs", 55L)
+            val drawEdgeMs = config.optLong("drawEdgeDurationMs", 250L)
+            val drawGapMs = config.optLong("drawGlyphGapMs", 700L)
+            val commandOpenPrimaryAction = config.optString(
+                "commandOpenPrimaryAction",
+                CommandOpenPrimaryAction.SEND_SPEED.name,
+            ).toCommandOpenPrimaryAction()
+            val commandOpenSecondaryAction = config.optString(
+                "commandOpenSecondaryAction",
+                CommandOpenSecondaryAction.MEDIUM.name,
+            ).toCommandOpenSecondaryAction()
+            val commandOpenHideSlowOption = config.optBoolean("commandOpenHideSlowOption", false)
+            val safeCommandOpenSecondaryAction = if (
+                commandOpenHideSlowOption && commandOpenSecondaryAction == CommandOpenSecondaryAction.SLOW
+            ) {
+                CommandOpenSecondaryAction.MEDIUM
+            } else {
+                commandOpenSecondaryAction
+            }
             val doneButtonXPercent = config.optDouble("doneButtonXPercent", 75.56).toFloat()
             val doneButtonYPercent = config.optDouble("doneButtonYPercent", 92.29).toFloat()
             val overlayXRatio = config.optDouble("overlayXRatio", 0.62).toFloat()
@@ -292,6 +354,10 @@ class SettingsRepository(context: Context) {
                     KEY_USE_ACCESSIBILITY_SCREENSHOT_CAPTURE,
                     useAccessibilityScreenshotCapture && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
                 )
+                .putBoolean(
+                    KEY_AUTO_GRANT_ACCESSIBILITY_VIA_SHIZUKU_ON_LAUNCH,
+                    autoGrantAccessibilityViaShizukuOnLaunch,
+                )
                 .putLong(KEY_FRAME_INTERVAL_MS, frameInterval.coerceIn(120L, 1000L))
                 .putLong(KEY_GO_CHECK_INTERVAL_MS, goInterval.coerceIn(30L, 300L))
                 .putFloat(KEY_DEBUG_PLAYBACK_SPEED, debugPlaybackSpeed.coerceIn(0.25f, 4.0f))
@@ -302,6 +368,7 @@ class SettingsRepository(context: Context) {
                 .putFloat(KEY_TEMPLATE_THRESHOLD, templateThreshold.coerceIn(0.5f, 0.99f))
                 .putFloat(KEY_COMMAND_OPEN_MAX_LUMA, commandOpenMaxLuma.coerceIn(0f, 30f))
                 .putFloat(KEY_GLYPH_DISPLAY_MIN_LUMA, glyphDisplayMinLuma.coerceIn(0f, 80f))
+                .putFloat(KEY_GLYPH_DISPLAY_TOP_BARS_MIN_LUMA, glyphDisplayTopBarsMinLuma.coerceIn(0f, 40f))
                 .putFloat(KEY_GO_COLOR_DELTA, goColorDelta.coerceIn(1f, 80f))
                 .putFloat(KEY_COUNTDOWN_VISIBLE_THRESHOLD, countdownVisibleThreshold.coerceIn(1f, 40f))
                 .putFloat(KEY_PROGRESS_VISIBLE_THRESHOLD, progressVisibleThreshold.coerceIn(1f, 80f))
@@ -311,8 +378,11 @@ class SettingsRepository(context: Context) {
                 .putFloat(KEY_COUNTDOWN_BOTTOM_PERCENT, countdownBottomPercent.coerceIn(0f, 30f))
                 .putFloat(KEY_PROGRESS_TOP_PERCENT, progressTopPercent.coerceIn(0f, 30f))
                 .putFloat(KEY_PROGRESS_BOTTOM_PERCENT, progressBottomPercent.coerceIn(0f, 30f))
-                .putLong(KEY_DRAW_EDGE_MS, drawEdgeMs.coerceIn(15L, 220L))
-                .putLong(KEY_DRAW_GAP_MS, drawGapMs.coerceIn(0L, 300L))
+                .putLong(KEY_DRAW_EDGE_MS, drawEdgeMs.coerceIn(15L, 500L))
+                .putLong(KEY_DRAW_GAP_MS, drawGapMs.coerceIn(0L, 1000L))
+                .putString(KEY_COMMAND_OPEN_PRIMARY_ACTION, commandOpenPrimaryAction.name)
+                .putString(KEY_COMMAND_OPEN_SECONDARY_ACTION, safeCommandOpenSecondaryAction.name)
+                .putBoolean(KEY_COMMAND_OPEN_HIDE_SLOW_OPTION, commandOpenHideSlowOption)
                 .putFloat(KEY_DONE_BUTTON_X_PERCENT, doneButtonXPercent.coerceIn(60f, 100f))
                 .putFloat(KEY_DONE_BUTTON_Y_PERCENT, doneButtonYPercent.coerceIn(90f, 100f))
                 .putFloat(KEY_OVERLAY_X_RATIO, overlayXRatio.coerceIn(0f, 1f))
@@ -332,6 +402,17 @@ class SettingsRepository(context: Context) {
     }
 
     private fun loadFromPrefs(): AppSettings {
+        val commandOpenHideSlowOption = prefs.getBoolean(KEY_COMMAND_OPEN_HIDE_SLOW_OPTION, false)
+        val commandOpenSecondaryAction = prefs
+            .getString(KEY_COMMAND_OPEN_SECONDARY_ACTION, CommandOpenSecondaryAction.MEDIUM.name)
+            .toCommandOpenSecondaryAction()
+            .let { action ->
+                if (commandOpenHideSlowOption && action == CommandOpenSecondaryAction.SLOW) {
+                    CommandOpenSecondaryAction.MEDIUM
+                } else {
+                    action
+                }
+            }
         return AppSettings(
             recognitionMode = prefs.getString(KEY_RECOGNITION_MODE, RecognitionMode.EDGE_SET.name)
                 .toRecognitionMode(),
@@ -340,6 +421,10 @@ class SettingsRepository(context: Context) {
             } else {
                 false
             },
+            autoGrantAccessibilityViaShizukuOnLaunch = prefs.getBoolean(
+                KEY_AUTO_GRANT_ACCESSIBILITY_VIA_SHIZUKU_ON_LAUNCH,
+                false,
+            ),
             frameIntervalMs = prefs.getLong(KEY_FRAME_INTERVAL_MS, 300L),
             goCheckIntervalMs = prefs.getLong(KEY_GO_CHECK_INTERVAL_MS, 90L),
             debugPlaybackSpeed = prefs.getFloat(KEY_DEBUG_PLAYBACK_SPEED, 1.0f),
@@ -350,6 +435,7 @@ class SettingsRepository(context: Context) {
             startTemplateThreshold = prefs.getFloat(KEY_TEMPLATE_THRESHOLD, 0.84f),
             commandOpenMaxLuma = prefs.getFloat(KEY_COMMAND_OPEN_MAX_LUMA, 1f),
             glyphDisplayMinLuma = prefs.getFloat(KEY_GLYPH_DISPLAY_MIN_LUMA, 10f),
+            glyphDisplayTopBarsMinLuma = prefs.getFloat(KEY_GLYPH_DISPLAY_TOP_BARS_MIN_LUMA, 1f),
             goColorDeltaThreshold = prefs.getFloat(KEY_GO_COLOR_DELTA, 18f),
             countdownVisibleThreshold = prefs.getFloat(KEY_COUNTDOWN_VISIBLE_THRESHOLD, 5f),
             progressVisibleThreshold = prefs.getFloat(KEY_PROGRESS_VISIBLE_THRESHOLD, 20f),
@@ -359,8 +445,13 @@ class SettingsRepository(context: Context) {
             countdownBottomPercent = prefs.getFloat(KEY_COUNTDOWN_BOTTOM_PERCENT, 9f).coerceIn(0f, 30f),
             progressTopPercent = prefs.getFloat(KEY_PROGRESS_TOP_PERCENT, 9.3f).coerceIn(0f, 30f),
             progressBottomPercent = prefs.getFloat(KEY_PROGRESS_BOTTOM_PERCENT, 10.5f).coerceIn(0f, 30f),
-            drawEdgeDurationMs = prefs.getLong(KEY_DRAW_EDGE_MS, 70L),
-            drawGlyphGapMs = prefs.getLong(KEY_DRAW_GAP_MS, 55L),
+            drawEdgeDurationMs = prefs.getLong(KEY_DRAW_EDGE_MS, 250L),
+            drawGlyphGapMs = prefs.getLong(KEY_DRAW_GAP_MS, 700L),
+            commandOpenPrimaryAction = prefs
+                .getString(KEY_COMMAND_OPEN_PRIMARY_ACTION, CommandOpenPrimaryAction.SEND_SPEED.name)
+                .toCommandOpenPrimaryAction(),
+            commandOpenSecondaryAction = commandOpenSecondaryAction,
+            commandOpenHideSlowOption = commandOpenHideSlowOption,
             doneButtonXPercent = prefs.getFloat(KEY_DONE_BUTTON_X_PERCENT, 75.56f).coerceIn(60f, 100f),
             doneButtonYPercent = prefs.getFloat(KEY_DONE_BUTTON_Y_PERCENT, 92.29f).coerceIn(90f, 100f),
             overlayXRatio = prefs.getFloat(KEY_OVERLAY_X_RATIO, 0.62f),
@@ -377,6 +468,7 @@ class SettingsRepository(context: Context) {
         const val FILE_NAME = "glyph_hacker_settings"
         const val KEY_RECOGNITION_MODE = "recognition_mode"
         const val KEY_USE_ACCESSIBILITY_SCREENSHOT_CAPTURE = "use_accessibility_screenshot_capture"
+        const val KEY_AUTO_GRANT_ACCESSIBILITY_VIA_SHIZUKU_ON_LAUNCH = "auto_grant_accessibility_via_shizuku_on_launch"
         const val KEY_FRAME_INTERVAL_MS = "frame_interval_ms"
         const val KEY_GO_CHECK_INTERVAL_MS = "go_check_interval_ms"
         const val KEY_DEBUG_PLAYBACK_SPEED = "debug_playback_speed"
@@ -387,6 +479,7 @@ class SettingsRepository(context: Context) {
         const val KEY_TEMPLATE_THRESHOLD = "start_template_threshold"
         const val KEY_COMMAND_OPEN_MAX_LUMA = "command_open_max_luma"
         const val KEY_GLYPH_DISPLAY_MIN_LUMA = "glyph_display_min_luma"
+        const val KEY_GLYPH_DISPLAY_TOP_BARS_MIN_LUMA = "glyph_display_top_bars_min_luma"
         const val KEY_GO_COLOR_DELTA = "go_color_delta_threshold"
         const val KEY_COUNTDOWN_VISIBLE_THRESHOLD = "countdown_visible_threshold"
         const val KEY_PROGRESS_VISIBLE_THRESHOLD = "progress_visible_threshold"
@@ -398,6 +491,9 @@ class SettingsRepository(context: Context) {
         const val KEY_PROGRESS_BOTTOM_PERCENT = "progress_bottom_percent"
         const val KEY_DRAW_EDGE_MS = "draw_edge_duration_ms"
         const val KEY_DRAW_GAP_MS = "draw_glyph_gap_ms"
+        const val KEY_COMMAND_OPEN_PRIMARY_ACTION = "command_open_primary_action"
+        const val KEY_COMMAND_OPEN_SECONDARY_ACTION = "command_open_secondary_action"
+        const val KEY_COMMAND_OPEN_HIDE_SLOW_OPTION = "command_open_hide_slow_option"
         const val KEY_DONE_BUTTON_X_PERCENT = "done_button_x_percent"
         const val KEY_DONE_BUTTON_Y_PERCENT = "done_button_y_percent"
         const val KEY_OVERLAY_X_RATIO = "overlay_x_ratio"
@@ -420,6 +516,16 @@ private fun android.content.SharedPreferences.Editor.putNullableString(
 private fun String?.toRecognitionMode(): RecognitionMode {
     if (this.isNullOrBlank()) return RecognitionMode.EDGE_SET
     return RecognitionMode.entries.firstOrNull { it.name == this } ?: RecognitionMode.EDGE_SET
+}
+
+private fun String?.toCommandOpenPrimaryAction(): CommandOpenPrimaryAction {
+    if (this.isNullOrBlank()) return CommandOpenPrimaryAction.SEND_SPEED
+    return CommandOpenPrimaryAction.entries.firstOrNull { it.name == this } ?: CommandOpenPrimaryAction.SEND_SPEED
+}
+
+private fun String?.toCommandOpenSecondaryAction(): CommandOpenSecondaryAction {
+    if (this.isNullOrBlank()) return CommandOpenSecondaryAction.MEDIUM
+    return CommandOpenSecondaryAction.entries.firstOrNull { it.name == this } ?: CommandOpenSecondaryAction.MEDIUM
 }
 
 private fun String?.toCalibrationProfile(): CalibrationProfile? {
@@ -533,6 +639,7 @@ private fun AppSettings.toJson(): JSONObject {
     val json = JSONObject()
     json.put("recognitionMode", recognitionMode.name)
     json.put("useAccessibilityScreenshotCapture", useAccessibilityScreenshotCapture)
+    json.put("autoGrantAccessibilityViaShizukuOnLaunch", autoGrantAccessibilityViaShizukuOnLaunch)
     json.put("frameIntervalMs", frameIntervalMs)
     json.put("goCheckIntervalMs", goCheckIntervalMs)
     json.put("debugPlaybackSpeed", debugPlaybackSpeed.toDouble())
@@ -543,6 +650,7 @@ private fun AppSettings.toJson(): JSONObject {
     json.put("startTemplateThreshold", startTemplateThreshold.toDouble())
     json.put("commandOpenMaxLuma", commandOpenMaxLuma.toDouble())
     json.put("glyphDisplayMinLuma", glyphDisplayMinLuma.toDouble())
+    json.put("glyphDisplayTopBarsMinLuma", glyphDisplayTopBarsMinLuma.toDouble())
     json.put("goColorDeltaThreshold", goColorDeltaThreshold.toDouble())
     json.put("countdownVisibleThreshold", countdownVisibleThreshold.toDouble())
     json.put("progressVisibleThreshold", progressVisibleThreshold.toDouble())
@@ -554,6 +662,9 @@ private fun AppSettings.toJson(): JSONObject {
     json.put("progressBottomPercent", progressBottomPercent.toDouble())
     json.put("drawEdgeDurationMs", drawEdgeDurationMs)
     json.put("drawGlyphGapMs", drawGlyphGapMs)
+    json.put("commandOpenPrimaryAction", commandOpenPrimaryAction.name)
+    json.put("commandOpenSecondaryAction", commandOpenSecondaryAction.name)
+    json.put("commandOpenHideSlowOption", commandOpenHideSlowOption)
     json.put("doneButtonXPercent", doneButtonXPercent.toDouble())
     json.put("doneButtonYPercent", doneButtonYPercent.toDouble())
     json.put("overlayXRatio", overlayXRatio.toDouble())

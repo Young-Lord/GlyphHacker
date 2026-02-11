@@ -61,6 +61,7 @@ class CaptureForegroundService : Service() {
     private var consecutiveNullImageCount: Int = 0
     private var calibrationMissingLogged: Boolean = false
     private var lastLoggedPhase: GlyphPhase = GlyphPhase.IDLE
+    private var commandOpenPresetIssued: Boolean = false
     private var foregroundStarted: Boolean = false
     private var foregroundUsesAccessibilityType: Boolean = false
     private var recognitionPaused: Boolean = false
@@ -166,6 +167,7 @@ class CaptureForegroundService : Service() {
             ACTION_RESET_TO_IDLE -> {
                 Log.i(LOG_TAG, "[CAPTURE] received reset-to-idle action")
                 recognitionEngine.resetSession()
+                commandOpenPresetIssued = false
                 recognitionPaused = false
                 RuntimeStateBus.setRecognitionEnabled(true)
                 val running = captureJob?.isActive == true && foregroundStarted
@@ -225,6 +227,7 @@ class CaptureForegroundService : Service() {
                 recognitionEngine.resetSession()
                 RuntimeStateBus.setIdle()
                 lastLoggedPhase = GlyphPhase.IDLE
+                commandOpenPresetIssued = false
                 Log.i(
                     LOG_TAG,
                     "[CAPTURE][F${completion.sourceFrameId}] done tap confirmed; reset to IDLE immediately",
@@ -549,6 +552,7 @@ class CaptureForegroundService : Service() {
                 minimumMatchScore = settings.minimumMatchScore,
                 commandOpenMaxLuma = settings.commandOpenMaxLuma,
                 glyphDisplayMinLuma = settings.glyphDisplayMinLuma,
+                glyphDisplayTopBarsMinLuma = settings.glyphDisplayTopBarsMinLuma,
                 goColorDeltaThreshold = settings.goColorDeltaThreshold,
                 countdownVisibleThreshold = settings.countdownVisibleThreshold,
                 progressVisibleThreshold = settings.progressVisibleThreshold,
@@ -570,6 +574,43 @@ class CaptureForegroundService : Service() {
                 "[CAPTURE][F$frameId] phase $lastLoggedPhase -> ${snapshot.phase} glyph=${snapshot.currentGlyph ?: "-"} seq=${formatSequence(snapshot.sequence)}",
             )
             lastLoggedPhase = snapshot.phase
+        }
+
+        if (snapshot.phase == GlyphPhase.COMMAND_OPEN) {
+            if (!commandOpenPresetIssued) {
+                val presetGlyphs = buildCommandOpenPresetGlyphs(settings)
+                commandOpenPresetIssued = true
+                if (presetGlyphs.isNotEmpty()) {
+                    val emittedAtElapsedMs = SystemClock.elapsedRealtime()
+                    val emitted = DrawCommandBus.tryEmit(
+                        DrawCommand(
+                            recognitionMode = settings.recognitionMode,
+                            glyphNames = presetGlyphs,
+                            calibrationProfile = profile,
+                            frameWidth = frame.width,
+                            frameHeight = frame.height,
+                            edgeDurationMs = settings.drawEdgeDurationMs,
+                            glyphGapMs = settings.drawGlyphGapMs,
+                            doneButtonXPercent = settings.doneButtonXPercent,
+                            doneButtonYPercent = settings.doneButtonYPercent,
+                            sourceFrameId = frameId,
+                            sourceFrameCapturedAtElapsedMs = frameCapturedAtElapsedMs,
+                            sourceFrameAnalyzedAtElapsedMs = emittedAtElapsedMs,
+                            emittedAtElapsedMs = emittedAtElapsedMs,
+                        )
+                    )
+                    val captureToEmitMs = (emittedAtElapsedMs - frameCapturedAtElapsedMs).coerceAtLeast(0L)
+                    Log.i(
+                        LOG_TAG,
+                        "[CAPTURE][F$frameId] command-open preset seq=${formatSequence(presetGlyphs)} emitted=$emitted process=${processDurationMs}ms captureToEmit=${captureToEmitMs}ms",
+                    )
+                    if (!emitted) {
+                        Log.w(LOG_TAG, "[CAPTURE][F$frameId] command-open preset dropped: DrawCommandBus buffer full")
+                    }
+                }
+            }
+        } else if (snapshot.phase == GlyphPhase.IDLE) {
+            commandOpenPresetIssued = false
         }
 
         if (snapshot.drawRequested && snapshot.sequence.isNotEmpty()) {
@@ -613,6 +654,7 @@ class CaptureForegroundService : Service() {
         Log.i(LOG_TAG, "[CAPTURE] pausing capture loop but keeping projection")
         stopCaptureLoopOnly()
         recognitionEngine.resetSession()
+        commandOpenPresetIssued = false
         RuntimeStateBus.reset()
     }
 
@@ -620,6 +662,7 @@ class CaptureForegroundService : Service() {
         Log.i(LOG_TAG, "[CAPTURE] stopSelfSafely invoked")
         stopCaptureResources()
         RuntimeStateBus.reset()
+        commandOpenPresetIssued = false
         if (foregroundStarted) {
             stopForeground(STOP_FOREGROUND_REMOVE)
             foregroundStarted = false
@@ -660,6 +703,13 @@ class CaptureForegroundService : Service() {
 
     private fun formatSequence(sequence: List<String>): String {
         return if (sequence.isEmpty()) "-" else sequence.joinToString(">")
+    }
+
+    private fun buildCommandOpenPresetGlyphs(settings: AppSettings): List<String> {
+        val result = ArrayList<String>(2)
+        settings.commandOpenPrimaryAction.glyphName?.let(result::add)
+        settings.commandOpenSecondaryAction.glyphName?.let(result::add)
+        return result
     }
 
     private fun requestProjectionPermission() {

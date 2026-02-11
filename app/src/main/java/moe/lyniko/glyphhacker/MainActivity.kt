@@ -15,6 +15,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.provider.Settings
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -77,6 +78,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
+import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -106,8 +108,10 @@ import moe.lyniko.glyphhacker.ui.theme.GlyphHackerTheme
 import moe.lyniko.glyphhacker.util.base64ToBitmap
 import moe.lyniko.glyphhacker.util.decodeBitmapFromUri
 import moe.lyniko.glyphhacker.util.decodeVideoFrameFromUri
+import moe.lyniko.glyphhacker.util.ShizukuAccessibilityHelper
 import moe.lyniko.glyphhacker.util.takePersistableReadPermission
 import moe.lyniko.glyphhacker.util.uriExists
+import rikka.shizuku.Shizuku
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
@@ -117,6 +121,12 @@ class MainActivity : ComponentActivity() {
     private val viewModel by viewModels<MainViewModel>()
     private val permissionState = MutableStateFlow(PermissionSnapshot())
     private val externalProjectionAction = MutableStateFlow<ProjectionGrantAction?>(null)
+    private var autoGrantInProgress = false
+    private var autoGrantLaunchFinished = false
+    private val shizukuBinderListener = Shizuku.OnBinderReceivedListener {
+        Log.d(LOG_TAG, "[AUTO_A11Y] Received Shizuku binder")
+        attemptAutoGrantOnLaunch()
+    }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
@@ -137,6 +147,7 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
+        private const val LOG_TAG = "GlyphHacker-Shizuku"
         const val EXTRA_PROJECTION_ACTION = "extra_projection_action"
         const val PROJECTION_ACTION_START_CAPTURE = "start_capture"
         const val PROJECTION_ACTION_RESTART_CAPTURE = "restart_capture"
@@ -149,6 +160,9 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         refreshPermissionState()
         consumeProjectionActionIntent(intent)
+        Log.d(LOG_TAG, "[AUTO_A11Y] onCreate, register binder listener")
+        Shizuku.addBinderReceivedListener(shizukuBinderListener)
+        attemptAutoGrantOnLaunch()
 
         val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
 
@@ -253,10 +267,16 @@ class MainActivity : ComponentActivity() {
                     refreshPermissionState()
                 }
 
-                fun startAccessibilityScreenshotCaptureInternal() {
+                fun startAccessibilityScreenshotCaptureInternal(): Boolean {
+                    if (!isAccessibilityServiceEnabled(context)) {
+                        refreshPermissionState()
+                        context.toast("辅助功能未授权，无法开始识别，请先在系统设置中开启")
+                        return false
+                    }
                     RuntimeStateBus.setRecognitionEnabled(true)
                     CaptureForegroundService.startAccessibility(context)
                     refreshPermissionState()
+                    return true
                 }
 
                 fun canUseAccessibilityScreenshotCapture(activeSettings: AppSettings = latestSettings): Boolean {
@@ -474,6 +494,9 @@ class MainActivity : ComponentActivity() {
                     refreshPermissionState()
                     if (currentTab == RootTab.MAIN) {
                         settingsSubPage = SettingsSubPage.GENERAL
+                    } else {
+                        Log.d(LOG_TAG, "[AUTO_A11Y] Enter settings tab, trigger attempt")
+                        attemptAutoGrantOnLaunch(force = true)
                     }
                 }
 
@@ -576,8 +599,9 @@ class MainActivity : ComponentActivity() {
                             },
                             onQuickStart = {
                                 if (canUseAccessibilityScreenshotCapture()) {
-                                    startOverlayInternal()
-                                    startAccessibilityScreenshotCaptureInternal()
+                                    if (startAccessibilityScreenshotCaptureInternal()) {
+                                        startOverlayInternal()
+                                    }
                                 } else {
                                     requestProjectionFor(ProjectionGrantAction.QUICK_START)
                                 }
@@ -597,6 +621,7 @@ class MainActivity : ComponentActivity() {
                                     getReadyPreview = getReadyPreview,
                                     onSetRecognitionMode = viewModel::setRecognitionMode,
                                     onSetUseAccessibilityScreenshotCapture = viewModel::setUseAccessibilityScreenshotCapture,
+                                    onSetAutoGrantAccessibilityViaShizukuOnLaunch = viewModel::setAutoGrantAccessibilityViaShizukuOnLaunch,
                                     onSetFrameInterval = viewModel::setFrameIntervalMs,
                                     onSetGoCheckInterval = viewModel::setGoCheckIntervalMs,
                                     onSetEdgeThreshold = viewModel::setEdgeActivationThreshold,
@@ -606,6 +631,7 @@ class MainActivity : ComponentActivity() {
                                     onSetTemplateThreshold = viewModel::setStartTemplateThreshold,
                                     onSetCommandOpenMaxLuma = viewModel::setCommandOpenMaxLuma,
                                     onSetGlyphDisplayMinLuma = viewModel::setGlyphDisplayMinLuma,
+                                    onSetGlyphDisplayTopBarsMinLuma = viewModel::setGlyphDisplayTopBarsMinLuma,
                                     onSetGoColorDelta = viewModel::setGoColorDeltaThreshold,
                                     onSetCountdownVisibleThreshold = viewModel::setCountdownVisibleThreshold,
                                     onSetProgressVisibleThreshold = viewModel::setProgressVisibleThreshold,
@@ -617,6 +643,7 @@ class MainActivity : ComponentActivity() {
                                     onSetProgressBottomPercent = viewModel::setProgressBottomPercent,
                                     onSetDrawEdgeMs = viewModel::setDrawEdgeDurationMs,
                                     onSetDrawGapMs = viewModel::setDrawGlyphGapMs,
+                                    onSetCommandOpenHideSlowOption = viewModel::setCommandOpenHideSlowOption,
                                     onSetDoneButtonXPercent = viewModel::setDoneButtonXPercent,
                                     onSetDoneButtonYPercent = viewModel::setDoneButtonYPercent,
                                     onSetOverlayXRatio = viewModel::setOverlayXRatio,
@@ -810,6 +837,80 @@ class MainActivity : ComponentActivity() {
         refreshPermissionState()
     }
 
+    override fun onDestroy() {
+        Shizuku.removeBinderReceivedListener(shizukuBinderListener)
+        super.onDestroy()
+    }
+
+    private fun attemptAutoGrantOnLaunch(force: Boolean = false) {
+        if ((!force && autoGrantLaunchFinished) || autoGrantInProgress) {
+            Log.d(
+                LOG_TAG,
+                "[AUTO_A11Y] Skip attempt: force=$force finished=$autoGrantLaunchFinished inProgress=$autoGrantInProgress",
+            )
+            return
+        }
+        Log.d(LOG_TAG, "[AUTO_A11Y] Trigger attempt on launch force=$force")
+        lifecycleScope.launch {
+            val result = maybeAutoGrantAccessibilityViaShizuku(viewModel.settings.value)
+            Log.d(LOG_TAG, "[AUTO_A11Y] Attempt result=$result")
+            if (!force && result != null && result != ShizukuAccessibilityHelper.Result.SHIZUKU_NOT_READY) {
+                autoGrantLaunchFinished = true
+            }
+        }
+    }
+
+    private suspend fun maybeAutoGrantAccessibilityViaShizuku(settings: AppSettings): ShizukuAccessibilityHelper.Result? {
+        if (!settings.autoGrantAccessibilityViaShizukuOnLaunch) {
+            Log.d(LOG_TAG, "[AUTO_A11Y] Disabled by setting")
+            return null
+        }
+        if (isAccessibilityServiceEnabled(this)) {
+            Log.d(LOG_TAG, "[AUTO_A11Y] Accessibility already enabled")
+            return null
+        }
+        if (autoGrantInProgress) {
+            Log.d(LOG_TAG, "[AUTO_A11Y] Skip because attempt already in progress")
+            return null
+        }
+
+        autoGrantInProgress = true
+        try {
+            val targetService = ComponentName(this, moe.lyniko.glyphhacker.accessibility.GlyphAccessibilityService::class.java)
+            val result = ShizukuAccessibilityHelper.grantAndEnableAccessibility(this, targetService)
+            when (result) {
+                ShizukuAccessibilityHelper.Result.ENABLED -> {
+                    refreshPermissionStateWithA11ySync()
+                }
+
+                ShizukuAccessibilityHelper.Result.SHIZUKU_NOT_READY -> Unit
+                ShizukuAccessibilityHelper.Result.SHIZUKU_PERMISSION_REQUESTED -> toast("请在 Shizuku 弹窗中授权")
+                ShizukuAccessibilityHelper.Result.SHIZUKU_PERMISSION_DENIED -> toast("Shizuku 授权被拒绝")
+                ShizukuAccessibilityHelper.Result.GRANT_WRITE_SECURE_SETTINGS_FAILED -> {
+                    toast("Shizuku 授权失败：无法授予 WRITE_SECURE_SETTINGS")
+                }
+
+                ShizukuAccessibilityHelper.Result.APPLY_SECURE_SETTINGS_FAILED -> {
+                    toast("自动开启辅助功能失败，请手动授权")
+                }
+            }
+            return result
+        } finally {
+            autoGrantInProgress = false
+            refreshPermissionState()
+        }
+    }
+
+    private suspend fun refreshPermissionStateWithA11ySync() {
+        repeat(6) {
+            refreshPermissionState()
+            if (permissionState.value.accessibilityGranted) {
+                return
+            }
+            delay(150L)
+        }
+    }
+
     private fun refreshPermissionState() {
         permissionState.value = PermissionSnapshot(
             overlayGranted = Settings.canDrawOverlays(this),
@@ -894,6 +995,7 @@ private fun SettingsPage(
     getReadyPreview: Bitmap?,
     onSetRecognitionMode: (RecognitionMode) -> Unit,
     onSetUseAccessibilityScreenshotCapture: (Boolean) -> Unit,
+    onSetAutoGrantAccessibilityViaShizukuOnLaunch: (Boolean) -> Unit,
     onSetFrameInterval: (Long) -> Unit,
     onSetGoCheckInterval: (Long) -> Unit,
     onSetEdgeThreshold: (Float) -> Unit,
@@ -903,6 +1005,7 @@ private fun SettingsPage(
     onSetTemplateThreshold: (Float) -> Unit,
     onSetCommandOpenMaxLuma: (Float) -> Unit,
     onSetGlyphDisplayMinLuma: (Float) -> Unit,
+    onSetGlyphDisplayTopBarsMinLuma: (Float) -> Unit,
     onSetGoColorDelta: (Float) -> Unit,
     onSetCountdownVisibleThreshold: (Float) -> Unit,
     onSetProgressVisibleThreshold: (Float) -> Unit,
@@ -914,6 +1017,7 @@ private fun SettingsPage(
     onSetProgressBottomPercent: (Float) -> Unit,
     onSetDrawEdgeMs: (Long) -> Unit,
     onSetDrawGapMs: (Long) -> Unit,
+    onSetCommandOpenHideSlowOption: (Boolean) -> Unit,
     onSetDoneButtonXPercent: (Float) -> Unit,
     onSetDoneButtonYPercent: (Float) -> Unit,
     onSetOverlayXRatio: (Float) -> Unit,
@@ -961,6 +1065,13 @@ private fun SettingsPage(
                         onCheckedChange = onSetUseAccessibilityScreenshotCapture,
                     )
                 }
+
+                SettingSwitch(
+                    label = "启动时自动用 Shizuku 开无障碍",
+                    checked = settings.autoGrantAccessibilityViaShizukuOnLaunch,
+                    description = "应用打开时自动调用 Shizuku 获取 WRITE_SECURE_SETTINGS 并尝试开启本应用无障碍。",
+                    onCheckedChange = onSetAutoGrantAccessibilityViaShizukuOnLaunch,
+                )
 
                 SettingSlider(
                     label = "识别采样间隔 ${settings.frameIntervalMs}ms",
@@ -1030,6 +1141,13 @@ private fun SettingsPage(
                     onChange = onSetGlyphDisplayMinLuma,
                 )
                 SettingSlider(
+                    label = "进入GLYPH_DISPLAY三栏最低亮度 ${settings.glyphDisplayTopBarsMinLuma.format2()}",
+                    value = settings.glyphDisplayTopBarsMinLuma,
+                    valueRange = 0f..20f,
+                    description = "COMMAND_OPEN -> GLYPH_DISPLAY 需首框/倒计时/进度条都高于该值。默认1。",
+                    onChange = onSetGlyphDisplayTopBarsMinLuma,
+                )
+                SettingSlider(
                     label = "首框亮起阈值 ${settings.goColorDeltaThreshold.format2()}",
                     value = settings.goColorDeltaThreshold,
                     valueRange = 1f..60f,
@@ -1097,19 +1215,25 @@ private fun SettingsPage(
                 SettingSlider(
                     label = "每边绘制时长 ${settings.drawEdgeDurationMs}ms",
                     value = settings.drawEdgeDurationMs.toFloat(),
-                    valueRange = 15f..220f,
+                    valueRange = 15f..500f,
                     description = "自动绘制时每一条线段耗时。",
                 ) {
                     onSetDrawEdgeMs(it.toLong())
                 }
                 SettingSlider(
-                    label = "glyph间隔 ${settings.drawGlyphGapMs}ms",
+                    label = "绘制 Glyph 间隔 ${settings.drawGlyphGapMs}ms",
                     value = settings.drawGlyphGapMs.toFloat(),
-                    valueRange = 0f..300f,
+                    valueRange = 0f..1000f,
                     description = "相邻 glyph 之间的停顿时长。",
                 ) {
                     onSetDrawGapMs(it.toLong())
                 }
+                SettingSwitch(
+                    label = "隐藏“慢”选项",
+                    checked = settings.commandOpenHideSlowOption,
+                    description = "开启后悬浮窗第二栏只在“快/中”之间循环。",
+                    onCheckedChange = onSetCommandOpenHideSlowOption,
+                )
                 SettingSlider(
                     label = "DONE按钮X ${settings.doneButtonXPercent.format1()}%",
                     value = settings.doneButtonXPercent,

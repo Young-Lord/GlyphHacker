@@ -7,11 +7,11 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import moe.lyniko.glyphhacker.data.CommandOpenPrimaryAction
+import moe.lyniko.glyphhacker.data.CommandOpenSecondaryAction
 import moe.lyniko.glyphhacker.data.RecognitionMode
 import moe.lyniko.glyphhacker.data.RuntimeStateBus
 import moe.lyniko.glyphhacker.data.SettingsRepository
@@ -26,11 +26,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val appContext = application
     private val settingsRepository = SettingsRepository(application)
 
-    val settings = settingsRepository.settingsFlow.stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5_000L),
-        initialValue = moe.lyniko.glyphhacker.data.AppSettings(),
-    )
+    val settings = settingsRepository.settingsFlow
 
     val runtimeState = RuntimeStateBus.state
 
@@ -58,6 +54,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setUseAccessibilityScreenshotCapture(enabled: Boolean) {
         viewModelScope.launch {
             settingsRepository.updateUseAccessibilityScreenshotCapture(enabled)
+        }
+    }
+
+    fun setAutoGrantAccessibilityViaShizukuOnLaunch(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.updateAutoGrantAccessibilityViaShizukuOnLaunch(enabled)
         }
     }
 
@@ -99,6 +101,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setGlyphDisplayMinLuma(value: Float) {
         viewModelScope.launch { settingsRepository.updateGlyphDisplayMinLuma(value) }
+    }
+
+    fun setGlyphDisplayTopBarsMinLuma(value: Float) {
+        viewModelScope.launch { settingsRepository.updateGlyphDisplayTopBarsMinLuma(value) }
     }
 
     fun setGoColorDeltaThreshold(value: Float) {
@@ -143,6 +149,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setDrawGlyphGapMs(value: Long) {
         viewModelScope.launch { settingsRepository.updateDrawGlyphGapMs(value) }
+    }
+
+    fun setCommandOpenPrimaryAction(value: CommandOpenPrimaryAction) {
+        viewModelScope.launch { settingsRepository.updateCommandOpenPrimaryAction(value) }
+    }
+
+    fun setCommandOpenSecondaryAction(value: CommandOpenSecondaryAction) {
+        viewModelScope.launch { settingsRepository.updateCommandOpenSecondaryAction(value) }
+    }
+
+    fun setCommandOpenHideSlowOption(hide: Boolean) {
+        viewModelScope.launch { settingsRepository.updateCommandOpenHideSlowOption(hide) }
     }
 
     fun setDoneButtonXPercent(value: Float) {

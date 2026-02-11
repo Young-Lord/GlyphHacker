@@ -179,7 +179,10 @@ class GlyphRecognitionEngine {
         val commandOpenDetected = firstBoxLuma < settings.commandOpenMaxLuma &&
             countdownLuma < settings.commandOpenMaxLuma &&
             progressLuma < settings.commandOpenMaxLuma
-        val glyphDisplayDetected = firstBoxLuma > settings.glyphDisplayMinLuma
+        val glyphDisplayDetected = firstBoxLuma > settings.glyphDisplayMinLuma &&
+            firstBoxLuma > settings.glyphDisplayTopBarsMinLuma &&
+            countdownLuma > settings.glyphDisplayTopBarsMinLuma &&
+            progressLuma > settings.glyphDisplayTopBarsMinLuma
         if (commandOpenDetected) {
             commandOpenSeen = true
         }
@@ -508,6 +511,7 @@ class GlyphRecognitionEngine {
         val minimumMatchScore: Float,
         val commandOpenMaxLuma: Float,
         val glyphDisplayMinLuma: Float,
+        val glyphDisplayTopBarsMinLuma: Float,
         val goColorDeltaThreshold: Float,
         val countdownVisibleThreshold: Float,
         val progressVisibleThreshold: Float,

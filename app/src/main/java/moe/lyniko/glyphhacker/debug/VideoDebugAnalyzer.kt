@@ -214,6 +214,7 @@ class VideoDebugAnalyzer(
             minimumMatchScore = minimumMatchScore,
             commandOpenMaxLuma = commandOpenMaxLuma,
             glyphDisplayMinLuma = glyphDisplayMinLuma,
+            glyphDisplayTopBarsMinLuma = glyphDisplayTopBarsMinLuma,
             goColorDeltaThreshold = goColorDeltaThreshold,
             countdownVisibleThreshold = countdownVisibleThreshold,
             progressVisibleThreshold = progressVisibleThreshold,
