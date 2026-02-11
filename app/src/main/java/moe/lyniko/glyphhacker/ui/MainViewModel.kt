@@ -2,7 +2,6 @@ package moe.lyniko.glyphhacker.ui
 
 import android.app.Application
 import android.content.pm.PackageManager
-import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -13,7 +12,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import moe.lyniko.glyphhacker.R
 import moe.lyniko.glyphhacker.data.RecognitionMode
 import moe.lyniko.glyphhacker.data.RuntimeStateBus
 import moe.lyniko.glyphhacker.data.SettingsRepository
@@ -198,8 +196,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 resizeBitmapToMax(loaded, 640)
             }
             val readyBoxProfile = withContext(Dispatchers.Default) {
-                val hexTemplate = BitmapFactory.decodeResource(appContext.resources, R.drawable.hexagon_template)
-                ReadyBoxDetector.detect(processed, hexTemplate)
+                ReadyBoxDetector.detect(processed)
             }
             val matchingTemplate = withContext(Dispatchers.Default) {
                 resizeBitmapToMax(processed, 280)

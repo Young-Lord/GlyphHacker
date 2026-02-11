@@ -26,8 +26,6 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import moe.lyniko.glyphhacker.MainActivity
 import moe.lyniko.glyphhacker.R
-import moe.lyniko.glyphhacker.capture.CaptureForegroundService
-import moe.lyniko.glyphhacker.capture.ProjectionPermissionStore
 import moe.lyniko.glyphhacker.data.RuntimeStateBus
 import moe.lyniko.glyphhacker.data.SettingsRepository
 import moe.lyniko.glyphhacker.glyph.GlyphPhase
@@ -117,16 +115,14 @@ class OverlayControlService : Service() {
             setPadding(padding / 2, 0, padding, 0)
             setOnClickListener {
                 if (!captureRunning) {
-                    val permission = ProjectionPermissionStore.get()
-                    if (permission == null) {
-                        requestProjectionPermission()
-                    } else {
-                        RuntimeStateBus.setRecognitionEnabled(true)
-                        CaptureForegroundService.start(this@OverlayControlService, permission)
-                    }
+                    requestProjectionPermission(MainActivity.PROJECTION_ACTION_START_CAPTURE)
                 } else {
                     RuntimeStateBus.setRecognitionEnabled(!recognitionEnabled)
                 }
+            }
+            setOnLongClickListener {
+                restartCaptureService()
+                true
             }
         }
         applyToggleState(toggleButton, running = false)
@@ -196,16 +192,20 @@ class OverlayControlService : Service() {
         view.setTextColor(if (running) 0xFF9FFFC4.toInt() else 0xFFFFD08A.toInt())
     }
 
-    private fun requestProjectionPermission() {
+    private fun requestProjectionPermission(action: String) {
         val intent = Intent(this, MainActivity::class.java).apply {
             addFlags(
                 Intent.FLAG_ACTIVITY_NEW_TASK or
                     Intent.FLAG_ACTIVITY_CLEAR_TOP or
                     Intent.FLAG_ACTIVITY_SINGLE_TOP,
             )
-            putExtra(MainActivity.EXTRA_PROJECTION_ACTION, MainActivity.PROJECTION_ACTION_START_CAPTURE)
+            putExtra(MainActivity.EXTRA_PROJECTION_ACTION, action)
         }
         startActivity(intent)
+    }
+
+    private fun restartCaptureService() {
+        requestProjectionPermission(MainActivity.PROJECTION_ACTION_RESTART_CAPTURE)
     }
 
     private fun observeOverlayPosition() {

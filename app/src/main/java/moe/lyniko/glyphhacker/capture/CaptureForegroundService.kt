@@ -69,7 +69,6 @@ class CaptureForegroundService : Service() {
                 return
             }
             Log.w(LOG_TAG, "[CAPTURE] media projection stopped by system")
-            ProjectionPermissionStore.clear()
             RuntimeStateBus.setRecognitionEnabled(false)
             serviceScope.launch {
                 stopSelfSafely()
@@ -113,6 +112,26 @@ class CaptureForegroundService : Service() {
                     }
                 }
                 startCaptureLoop()
+            }
+
+            ACTION_RESTART -> {
+                if (!startAsForeground()) {
+                    return START_NOT_STICKY
+                }
+                val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, Int.MIN_VALUE)
+                val permissionData = intent.intentExtra(EXTRA_RESULT_DATA)
+                if (resultCode == Int.MIN_VALUE || permissionData == null) {
+                    Log.e(LOG_TAG, "[CAPTURE] missing projection permission extras for restart; stopping service")
+                    stopSelfSafely()
+                    return START_NOT_STICKY
+                }
+                RuntimeStateBus.setRecognitionEnabled(true)
+                stopCaptureResources()
+                if (!initProjection(resultCode, permissionData)) {
+                    return START_NOT_STICKY
+                }
+                startCaptureLoop()
+                return START_STICKY
             }
 
             ACTION_STOP -> {
@@ -207,7 +226,6 @@ class CaptureForegroundService : Service() {
 
         if (!started) {
             Log.e(LOG_TAG, "[CAPTURE] startForeground failed; projection permission likely invalid")
-            ProjectionPermissionStore.clear()
             requestProjectionPermission()
             stopSelf()
             return false
@@ -276,7 +294,6 @@ class CaptureForegroundService : Service() {
             )
         }.getOrElse {
             Log.e(LOG_TAG, "[CAPTURE] createVirtualDisplay failed; projection permission likely expired", it)
-            ProjectionPermissionStore.clear()
             requestProjectionPermission()
             stopSelfSafely()
             return
@@ -537,6 +554,7 @@ class CaptureForegroundService : Service() {
         private const val EXTRA_RESULT_CODE = "extra_result_code"
         private const val EXTRA_RESULT_DATA = "extra_result_data"
         const val ACTION_START = "moe.lyniko.glyphhacker.capture.START"
+        const val ACTION_RESTART = "moe.lyniko.glyphhacker.capture.RESTART"
         const val ACTION_STOP = "moe.lyniko.glyphhacker.capture.STOP"
 
         fun start(context: Context, permission: ProjectionPermission) {
@@ -553,6 +571,15 @@ class CaptureForegroundService : Service() {
                 action = ACTION_STOP
             }
             context.startService(intent)
+        }
+
+        fun restart(context: Context, permission: ProjectionPermission) {
+            val intent = Intent(context, CaptureForegroundService::class.java).apply {
+                action = ACTION_RESTART
+                putExtra(EXTRA_RESULT_CODE, permission.resultCode)
+                putExtra(EXTRA_RESULT_DATA, permission.data)
+            }
+            ContextCompat.startForegroundService(context, intent)
         }
     }
 }

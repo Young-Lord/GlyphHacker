@@ -84,7 +84,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import moe.lyniko.glyphhacker.capture.CaptureForegroundService
 import moe.lyniko.glyphhacker.capture.ProjectionPermission
-import moe.lyniko.glyphhacker.capture.ProjectionPermissionStore
 import moe.lyniko.glyphhacker.data.AppSettings
 import moe.lyniko.glyphhacker.data.RecognitionMode
 import moe.lyniko.glyphhacker.data.RuntimeState
@@ -128,6 +127,7 @@ class MainActivity : ComponentActivity() {
         intent.removeExtra(EXTRA_PROJECTION_ACTION)
         externalProjectionAction.value = when (action) {
             PROJECTION_ACTION_START_CAPTURE -> ProjectionGrantAction.START_CAPTURE
+            PROJECTION_ACTION_RESTART_CAPTURE -> ProjectionGrantAction.RESTART_CAPTURE
             PROJECTION_ACTION_START_OVERLAY -> ProjectionGrantAction.START_OVERLAY
             PROJECTION_ACTION_QUICK_START -> ProjectionGrantAction.QUICK_START
             else -> null
@@ -137,6 +137,7 @@ class MainActivity : ComponentActivity() {
     companion object {
         const val EXTRA_PROJECTION_ACTION = "extra_projection_action"
         const val PROJECTION_ACTION_START_CAPTURE = "start_capture"
+        const val PROJECTION_ACTION_RESTART_CAPTURE = "restart_capture"
         const val PROJECTION_ACTION_START_OVERLAY = "start_overlay"
         const val PROJECTION_ACTION_QUICK_START = "quick_start"
     }
@@ -254,6 +255,11 @@ class MainActivity : ComponentActivity() {
                     when (action) {
                         ProjectionGrantAction.START_OVERLAY -> startOverlayInternal()
                         ProjectionGrantAction.START_CAPTURE -> startCaptureInternal(permission)
+                        ProjectionGrantAction.RESTART_CAPTURE -> {
+                            RuntimeStateBus.setRecognitionEnabled(true)
+                            CaptureForegroundService.restart(context, permission)
+                            refreshPermissionState()
+                        }
                         ProjectionGrantAction.QUICK_START -> {
                             startOverlayInternal()
                             startCaptureInternal(permission)
@@ -271,13 +277,12 @@ class MainActivity : ComponentActivity() {
                             resultCode = result.resultCode,
                             data = result.data!!,
                         )
-                        ProjectionPermissionStore.set(permission)
                         refreshPermissionState()
                         if (pendingAction != null) {
                             executeProjectionAction(pendingAction, permission)
                         } else {
                             scope.launch {
-                                snackbarHostState.showSnackbar("录屏权限已保存")
+                                snackbarHostState.showSnackbar("录屏权限已授予")
                             }
                         }
                     } else if (pendingAction != null) {
@@ -288,13 +293,8 @@ class MainActivity : ComponentActivity() {
                 }
 
                 fun requestProjectionFor(action: ProjectionGrantAction) {
-                    val permission = ProjectionPermissionStore.get()
-                    if (permission != null) {
-                        executeProjectionAction(action, permission)
-                    } else {
-                        pendingProjectionAction = action
-                        requestProjection.launch(projectionManager.createScreenCaptureIntent())
-                    }
+                    pendingProjectionAction = action
+                    requestProjection.launch(projectionManager.createScreenCaptureIntent())
                 }
 
                 LaunchedEffect(externalProjectionRequest) {
@@ -790,7 +790,6 @@ class MainActivity : ComponentActivity() {
         permissionState.value = PermissionSnapshot(
             overlayGranted = Settings.canDrawOverlays(this),
             accessibilityGranted = isAccessibilityServiceEnabled(this),
-            projectionGranted = ProjectionPermissionStore.get() != null,
         )
     }
 }
@@ -1718,11 +1717,11 @@ private enum class SettingsSubPage {
 private enum class ProjectionGrantAction {
     START_OVERLAY,
     START_CAPTURE,
+    RESTART_CAPTURE,
     QUICK_START,
 }
 
 private data class PermissionSnapshot(
     val overlayGranted: Boolean = false,
     val accessibilityGranted: Boolean = false,
-    val projectionGranted: Boolean = false,
 )
