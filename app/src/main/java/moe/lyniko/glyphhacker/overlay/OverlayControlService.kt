@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import moe.lyniko.glyphhacker.MainActivity
 import moe.lyniko.glyphhacker.R
+import moe.lyniko.glyphhacker.capture.CaptureForegroundService
 import moe.lyniko.glyphhacker.data.RuntimeStateBus
 import moe.lyniko.glyphhacker.data.SettingsRepository
 import moe.lyniko.glyphhacker.glyph.GlyphPhase
@@ -115,7 +116,12 @@ class OverlayControlService : Service() {
             setPadding(padding / 2, 0, padding, 0)
             setOnClickListener {
                 if (!captureRunning) {
-                    requestProjectionPermission(MainActivity.PROJECTION_ACTION_START_CAPTURE)
+                    if (shouldUseAccessibilityScreenshotCapture()) {
+                        RuntimeStateBus.setRecognitionEnabled(true)
+                        CaptureForegroundService.startAccessibility(this@OverlayControlService)
+                    } else {
+                        requestProjectionPermission(MainActivity.PROJECTION_ACTION_START_CAPTURE)
+                    }
                 } else {
                     RuntimeStateBus.setRecognitionEnabled(!recognitionEnabled)
                 }
@@ -135,6 +141,10 @@ class OverlayControlService : Service() {
             setPadding(padding, 0, 0, 0)
             setOnClickListener {
                 stopSelf()
+            }
+            setOnLongClickListener {
+                CaptureForegroundService.resetToIdle(this@OverlayControlService)
+                true
             }
         }
 
@@ -205,7 +215,19 @@ class OverlayControlService : Service() {
     }
 
     private fun restartCaptureService() {
-        requestProjectionPermission(MainActivity.PROJECTION_ACTION_RESTART_CAPTURE)
+        if (shouldUseAccessibilityScreenshotCapture()) {
+            RuntimeStateBus.setRecognitionEnabled(true)
+            CaptureForegroundService.restartAccessibility(this)
+        } else {
+            requestProjectionPermission(MainActivity.PROJECTION_ACTION_RESTART_CAPTURE)
+        }
+    }
+
+    private fun shouldUseAccessibilityScreenshotCapture(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            return false
+        }
+        return settingsRepository.settingsFlow.value.useAccessibilityScreenshotCapture
     }
 
     private fun observeOverlayPosition() {

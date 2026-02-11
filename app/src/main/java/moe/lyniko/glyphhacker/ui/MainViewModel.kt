@@ -55,6 +55,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun setUseAccessibilityScreenshotCapture(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.updateUseAccessibilityScreenshotCapture(enabled)
+        }
+    }
+
     fun setFrameIntervalMs(value: Long) {
         viewModelScope.launch { settingsRepository.updateFrameIntervalMs(value) }
     }

@@ -11,6 +11,7 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.provider.Settings
@@ -49,6 +50,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -249,6 +251,16 @@ class MainActivity : ComponentActivity() {
                     RuntimeStateBus.setRecognitionEnabled(true)
                     CaptureForegroundService.start(context, permission)
                     refreshPermissionState()
+                }
+
+                fun startAccessibilityScreenshotCaptureInternal() {
+                    RuntimeStateBus.setRecognitionEnabled(true)
+                    CaptureForegroundService.startAccessibility(context)
+                    refreshPermissionState()
+                }
+
+                fun canUseAccessibilityScreenshotCapture(activeSettings: AppSettings = latestSettings): Boolean {
+                    return Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && activeSettings.useAccessibilityScreenshotCapture
                 }
 
                 fun executeProjectionAction(action: ProjectionGrantAction, permission: ProjectionPermission) {
@@ -555,10 +567,21 @@ class MainActivity : ComponentActivity() {
                                 if (runtime.captureRunning && runtime.recognitionEnabled) {
                                     CaptureForegroundService.stop(context)
                                 } else {
-                                    requestProjectionFor(ProjectionGrantAction.START_CAPTURE)
+                                    if (canUseAccessibilityScreenshotCapture()) {
+                                        startAccessibilityScreenshotCaptureInternal()
+                                    } else {
+                                        requestProjectionFor(ProjectionGrantAction.START_CAPTURE)
+                                    }
                                 }
                             },
-                            onQuickStart = { requestProjectionFor(ProjectionGrantAction.QUICK_START) },
+                            onQuickStart = {
+                                if (canUseAccessibilityScreenshotCapture()) {
+                                    startOverlayInternal()
+                                    startAccessibilityScreenshotCaptureInternal()
+                                } else {
+                                    requestProjectionFor(ProjectionGrantAction.QUICK_START)
+                                }
+                            },
                         )
 
                         RootTab.SETTINGS -> {
@@ -573,6 +596,7 @@ class MainActivity : ComponentActivity() {
                                     nodePreviewBitmap = nodePreviewBitmap,
                                     getReadyPreview = getReadyPreview,
                                     onSetRecognitionMode = viewModel::setRecognitionMode,
+                                    onSetUseAccessibilityScreenshotCapture = viewModel::setUseAccessibilityScreenshotCapture,
                                     onSetFrameInterval = viewModel::setFrameIntervalMs,
                                     onSetGoCheckInterval = viewModel::setGoCheckIntervalMs,
                                     onSetEdgeThreshold = viewModel::setEdgeActivationThreshold,
@@ -869,6 +893,7 @@ private fun SettingsPage(
     nodePreviewBitmap: Bitmap?,
     getReadyPreview: Bitmap?,
     onSetRecognitionMode: (RecognitionMode) -> Unit,
+    onSetUseAccessibilityScreenshotCapture: (Boolean) -> Unit,
     onSetFrameInterval: (Long) -> Unit,
     onSetGoCheckInterval: (Long) -> Unit,
     onSetEdgeThreshold: (Float) -> Unit,
@@ -926,6 +951,15 @@ private fun SettingsPage(
                     Button(onClick = { onSetRecognitionMode(RecognitionMode.STROKE_SEQUENCE) }) {
                         Text(if (settings.recognitionMode == RecognitionMode.STROKE_SEQUENCE) "手工序列(预留)" else "手工序列")
                     }
+                }
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    SettingSwitch(
+                        label = "辅助功能截屏读屏",
+                        checked = settings.useAccessibilityScreenshotCapture,
+                        description = "API 30+ 可用。开启后改为辅助功能截图采样，不再使用录屏。",
+                        onCheckedChange = onSetUseAccessibilityScreenshotCapture,
+                    )
                 }
 
                 SettingSlider(
@@ -1380,6 +1414,28 @@ private fun PermissionRow(
             fontSize = 13.sp,
         )
         Button(onClick = onClick) { Text(actionText) }
+    }
+}
+
+@Composable
+private fun SettingSwitch(
+    label: String,
+    checked: Boolean,
+    description: String? = null,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, color = Color(0xFFD5F4DA), fontSize = 12.sp)
+            if (!description.isNullOrBlank()) {
+                Text(description, color = Color(0xFF9EB5C0), fontSize = 11.sp)
+            }
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 

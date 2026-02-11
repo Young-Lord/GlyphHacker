@@ -134,6 +134,32 @@ object RuntimeStateBus {
         _state.value = _state.value.copy(overlayVisible = visible, lastUpdatedAtMs = System.currentTimeMillis())
     }
 
+    fun setIdle(captureRunning: Boolean = _state.value.captureRunning) {
+        val current = _state.value
+        _state.value = current.copy(
+            captureRunning = captureRunning,
+            phase = GlyphPhase.IDLE,
+            currentGlyph = null,
+            sequence = emptyList(),
+            drawRemainingCount = 0,
+            activeEdges = emptySet(),
+            debugNodes = emptyList(),
+            debugFrameWidth = 0,
+            debugFrameHeight = 0,
+            firstBoxRect = null,
+            firstBoxLuma = 0f,
+            firstBoxBaselineLuma = 0f,
+            countdownRect = null,
+            countdownLuma = 0f,
+            progressRect = null,
+            progressLuma = 0f,
+            readyIndicatorsVisible = false,
+            confidence = 0f,
+            goMatched = false,
+            lastUpdatedAtMs = System.currentTimeMillis(),
+        )
+    }
+
     fun reset() {
         val recognitionEnabled = _state.value.recognitionEnabled
         val overlayVisible = _state.value.overlayVisible

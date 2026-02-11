@@ -2,15 +2,20 @@ package moe.lyniko.glyphhacker.accessibility
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.graphics.Bitmap
+import android.graphics.ColorSpace
 import android.os.SystemClock
 import android.util.Log
 import android.graphics.Path
+import android.os.Build
+import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -29,9 +34,15 @@ class GlyphAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         Log.i(LOG_TAG, "[DRAW] accessibility service connected")
+        AccessibilityScreenshotBus.setServiceConnected(true)
         serviceScope.launch {
             DrawCommandBus.commands.collectLatest { command ->
                 executeDrawCommand(command)
+            }
+        }
+        serviceScope.launch {
+            AccessibilityScreenshotBus.requests.collect { request ->
+                processScreenshotRequest(request)
             }
         }
     }
@@ -46,8 +57,98 @@ class GlyphAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         Log.i(LOG_TAG, "[DRAW] accessibility service destroyed")
+        AccessibilityScreenshotBus.setServiceConnected(false)
         serviceScope.cancel()
         super.onDestroy()
+    }
+
+    private fun processScreenshotRequest(request: ScreenshotCaptureRequest) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            request.reply.complete(
+                ScreenshotCaptureResult(
+                    bitmap = null,
+                    error = "api_not_supported",
+                )
+            )
+            return
+        }
+
+        val dispatched = runCatching {
+            takeScreenshot(
+                Display.DEFAULT_DISPLAY,
+                mainExecutor,
+                object : AccessibilityService.TakeScreenshotCallback {
+                    override fun onSuccess(screenshot: AccessibilityService.ScreenshotResult) {
+                        val capturedAtElapsedMs = SystemClock.elapsedRealtime()
+                        val bitmap = screenshotResultToBitmap(screenshot)
+                        if (bitmap == null) {
+                            request.reply.complete(
+                                ScreenshotCaptureResult(
+                                    bitmap = null,
+                                    capturedAtElapsedMs = capturedAtElapsedMs,
+                                    error = "bitmap_convert_failed",
+                                )
+                            )
+                            return
+                        }
+                        val completed = request.reply.complete(
+                            ScreenshotCaptureResult(
+                                bitmap = bitmap,
+                                capturedAtElapsedMs = capturedAtElapsedMs,
+                            )
+                        )
+                        if (!completed && !bitmap.isRecycled) {
+                            bitmap.recycle()
+                        }
+                    }
+
+                    override fun onFailure(errorCode: Int) {
+                        request.reply.complete(
+                            ScreenshotCaptureResult(
+                                bitmap = null,
+                                error = screenshotErrorLabel(errorCode),
+                            )
+                        )
+                    }
+                },
+            )
+        }.isSuccess
+
+        if (!dispatched) {
+            request.reply.complete(
+                ScreenshotCaptureResult(
+                    bitmap = null,
+                    error = "take_screenshot_dispatch_failed",
+                )
+            )
+        }
+    }
+
+    private fun screenshotResultToBitmap(screenshot: AccessibilityService.ScreenshotResult): Bitmap? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            return null
+        }
+        val hardwareBuffer = screenshot.hardwareBuffer
+        return try {
+            runCatching {
+                val colorSpace = screenshot.colorSpace ?: ColorSpace.get(ColorSpace.Named.SRGB)
+                val wrappedBitmap = Bitmap.wrapHardwareBuffer(hardwareBuffer, colorSpace)
+                val outputBitmap = wrappedBitmap?.copy(Bitmap.Config.ARGB_8888, false)
+                wrappedBitmap?.recycle()
+                outputBitmap
+            }.getOrNull()
+        } finally {
+            hardwareBuffer.close()
+        }
+    }
+
+    private fun screenshotErrorLabel(errorCode: Int): String {
+        return when (errorCode) {
+            AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERNAL_ERROR -> "internal_error"
+            AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT -> "interval_too_short"
+            AccessibilityService.ERROR_TAKE_SCREENSHOT_INVALID_DISPLAY -> "invalid_display"
+            else -> "unknown_$errorCode"
+        }
     }
 
     private suspend fun executeDrawCommand(command: DrawCommand) {
@@ -216,14 +317,44 @@ class GlyphAccessibilityService : AccessibilityService() {
         for (index in 1 until segment.size) {
             val fromIndex = segment[index - 1]
             val toIndex = segment[index]
+            val fromNode = nodeMap[fromIndex] ?: continue
             val toNode = nodeMap[toIndex] ?: continue
-            if (isImperfectDirectLink(glyphName, fromIndex, toIndex)) {
+            if (isCrowdedHorizontalRowLink(fromIndex, toIndex)) {
+                appendCrowdedHorizontalRowDetour(path, fromNode, toNode, frameWidth, frameHeight)
+            } else if (isImperfectDirectLink(glyphName, fromIndex, toIndex)) {
                 appendImperfectDirectLinkDetour(path, toNode, nodeMap, frameWidth, frameHeight)
             } else {
                 path.lineTo(toNode.x, toNode.y)
             }
         }
         return path
+    }
+
+    private fun isCrowdedHorizontalRowLink(fromIndex: Int, toIndex: Int): Boolean {
+        return (fromIndex == ROW3_LEFT_NODE && toIndex == ROW3_RIGHT_NODE) ||
+            (fromIndex == ROW3_RIGHT_NODE && toIndex == ROW3_LEFT_NODE) ||
+            (fromIndex == ROW5_LEFT_NODE && toIndex == ROW5_RIGHT_NODE) ||
+            (fromIndex == ROW5_RIGHT_NODE && toIndex == ROW5_LEFT_NODE)
+    }
+
+    private fun appendCrowdedHorizontalRowDetour(
+        path: Path,
+        fromNode: NodePosition,
+        toNode: NodePosition,
+        frameWidth: Int,
+        frameHeight: Int,
+    ) {
+        val maxX = (frameWidth - 1).toFloat().coerceAtLeast(1f)
+        val maxY = (frameHeight - 1).toFloat().coerceAtLeast(1f)
+        val apexX = (frameWidth * 0.5f).coerceIn(1f, maxX)
+        val baseY = (fromNode.y + toNode.y) * 0.5f
+        val riseFrom = abs(apexX - fromNode.x)
+        val riseTo = abs(apexX - toNode.x)
+        val rise = maxOf(riseFrom, riseTo)
+        val apexY = (baseY - rise).coerceIn(1f, maxY)
+
+        path.lineTo(apexX, apexY)
+        path.lineTo(toNode.x, toNode.y)
     }
 
     private fun isImperfectDirectLink(glyphName: String, fromIndex: Int, toIndex: Int): Boolean {
@@ -298,6 +429,10 @@ class GlyphAccessibilityService : AccessibilityService() {
     companion object {
         private const val LOG_TAG = "GlyphHacker"
         private const val IMPERFECT_NAME = "Imperfect"
+        private const val ROW3_LEFT_NODE = 9
+        private const val ROW3_RIGHT_NODE = 6
+        private const val ROW5_LEFT_NODE = 8
+        private const val ROW5_RIGHT_NODE = 7
         private const val IMPERFECT_ROW3_RIGHT_NODE = 6
         private const val IMPERFECT_ROW4_RIGHT_NODE = 7
         private const val IMPERFECT_ROW5_LEFT_NODE = 8

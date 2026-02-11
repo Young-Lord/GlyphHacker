@@ -34,6 +34,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import moe.lyniko.glyphhacker.MainActivity
 import moe.lyniko.glyphhacker.R
+import moe.lyniko.glyphhacker.accessibility.AccessibilityScreenshotBus
 import moe.lyniko.glyphhacker.accessibility.DrawCommand
 import moe.lyniko.glyphhacker.accessibility.DrawCommandBus
 import moe.lyniko.glyphhacker.data.AppSettings
@@ -61,7 +62,9 @@ class CaptureForegroundService : Service() {
     private var calibrationMissingLogged: Boolean = false
     private var lastLoggedPhase: GlyphPhase = GlyphPhase.IDLE
     private var foregroundStarted: Boolean = false
+    private var foregroundUsesAccessibilityType: Boolean = false
     private var recognitionPaused: Boolean = false
+    private var useAccessibilityScreenshotMode: Boolean = false
 
     private val projectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
@@ -92,11 +95,12 @@ class CaptureForegroundService : Service() {
         Log.i(LOG_TAG, "[CAPTURE] onStartCommand action=${intent?.action ?: "<null>"} startId=$startId")
         when (intent?.action) {
             ACTION_START -> {
+                useAccessibilityScreenshotMode = false
                 if (captureJob?.isActive == true && mediaProjection != null && virtualDisplay != null) {
                     Log.i(LOG_TAG, "[CAPTURE] start ignored because capture is already active")
                     return START_STICKY
                 }
-                if (!startAsForeground()) {
+                if (!startAsForeground(useAccessibilityScreenshot = false)) {
                     return START_NOT_STICKY
                 }
                 if (mediaProjection == null) {
@@ -114,10 +118,24 @@ class CaptureForegroundService : Service() {
                 startCaptureLoop()
             }
 
-            ACTION_RESTART -> {
-                if (!startAsForeground()) {
+            ACTION_START_ACCESSIBILITY -> {
+                if (captureJob?.isActive == true && useAccessibilityScreenshotMode) {
+                    Log.i(LOG_TAG, "[CAPTURE] start ignored because accessibility screenshot capture is already active")
+                    return START_STICKY
+                }
+                if (!startAsForeground(useAccessibilityScreenshot = true)) {
                     return START_NOT_STICKY
                 }
+                useAccessibilityScreenshotMode = true
+                stopCaptureResources()
+                startAccessibilityScreenshotLoop()
+            }
+
+            ACTION_RESTART -> {
+                if (!startAsForeground(useAccessibilityScreenshot = false)) {
+                    return START_NOT_STICKY
+                }
+                useAccessibilityScreenshotMode = false
                 val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, Int.MIN_VALUE)
                 val permissionData = intent.intentExtra(EXTRA_RESULT_DATA)
                 if (resultCode == Int.MIN_VALUE || permissionData == null) {
@@ -131,6 +149,27 @@ class CaptureForegroundService : Service() {
                     return START_NOT_STICKY
                 }
                 startCaptureLoop()
+                return START_STICKY
+            }
+
+            ACTION_RESTART_ACCESSIBILITY -> {
+                if (!startAsForeground(useAccessibilityScreenshot = true)) {
+                    return START_NOT_STICKY
+                }
+                RuntimeStateBus.setRecognitionEnabled(true)
+                useAccessibilityScreenshotMode = true
+                stopCaptureResources()
+                startAccessibilityScreenshotLoop()
+                return START_STICKY
+            }
+
+            ACTION_RESET_TO_IDLE -> {
+                Log.i(LOG_TAG, "[CAPTURE] received reset-to-idle action")
+                recognitionEngine.resetSession()
+                recognitionPaused = false
+                RuntimeStateBus.setRecognitionEnabled(true)
+                val running = captureJob?.isActive == true && foregroundStarted
+                RuntimeStateBus.setIdle(captureRunning = running)
                 return START_STICKY
             }
 
@@ -158,6 +197,7 @@ class CaptureForegroundService : Service() {
         captureJob?.cancel()
         RuntimeStateBus.reset()
         foregroundStarted = false
+        foregroundUsesAccessibilityType = false
         serviceScope.cancel()
         super.onDestroy()
     }
@@ -169,7 +209,7 @@ class CaptureForegroundService : Service() {
                 settings = next
                 Log.d(
                     LOG_TAG,
-                    "[CAPTURE] settings frameInterval=${next.frameIntervalMs}ms goCheck=${next.goCheckIntervalMs}ms stable=${next.stableFrameCount} edgeTh=${next.edgeActivationThreshold} minLine=${next.minimumLineBrightness}",
+                    "[CAPTURE] settings frameInterval=${next.frameIntervalMs}ms goCheck=${next.goCheckIntervalMs}ms stable=${next.stableFrameCount} edgeTh=${next.edgeActivationThreshold} minLine=${next.minimumLineBrightness} accessibilityShot=${next.useAccessibilityScreenshotCapture}",
                 )
             }
         }
@@ -183,7 +223,7 @@ class CaptureForegroundService : Service() {
                     return@collectLatest
                 }
                 recognitionEngine.resetSession()
-                RuntimeStateBus.reset()
+                RuntimeStateBus.setIdle()
                 lastLoggedPhase = GlyphPhase.IDLE
                 Log.i(
                     LOG_TAG,
@@ -193,8 +233,8 @@ class CaptureForegroundService : Service() {
         }
     }
 
-    private fun startAsForeground(): Boolean {
-        if (foregroundStarted) {
+    private fun startAsForeground(useAccessibilityScreenshot: Boolean): Boolean {
+        if (foregroundStarted && foregroundUsesAccessibilityType == useAccessibilityScreenshot) {
             return true
         }
         val launchIntent = Intent(this, MainActivity::class.java)
@@ -214,10 +254,15 @@ class CaptureForegroundService : Service() {
 
         val started = runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val foregroundType = if (useAccessibilityScreenshot) {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                } else {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                }
                 startForeground(
                     CAPTURE_NOTIFICATION_ID,
                     notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION,
+                    foregroundType,
                 )
             } else {
                 startForeground(CAPTURE_NOTIFICATION_ID, notification)
@@ -225,13 +270,16 @@ class CaptureForegroundService : Service() {
         }.isSuccess
 
         if (!started) {
-            Log.e(LOG_TAG, "[CAPTURE] startForeground failed; projection permission likely invalid")
-            requestProjectionPermission()
+            Log.e(LOG_TAG, "[CAPTURE] startForeground failed")
+            if (!useAccessibilityScreenshot) {
+                requestProjectionPermission()
+            }
             stopSelf()
             return false
         }
 
         foregroundStarted = true
+        foregroundUsesAccessibilityType = useAccessibilityScreenshot
         return true
     }
 
@@ -374,6 +422,106 @@ class CaptureForegroundService : Service() {
         }
     }
 
+    private fun startAccessibilityScreenshotLoop() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            Log.e(LOG_TAG, "[CAPTURE] accessibility screenshot mode requires API 30+")
+            stopSelfSafely()
+            return
+        }
+
+        stopCaptureLoopOnly()
+        recognitionEngine.resetSession()
+        internalStopInProgress = false
+        frameCounter = 0L
+        consecutiveNullImageCount = 0
+        calibrationMissingLogged = false
+        lastLoggedPhase = GlyphPhase.IDLE
+        recognitionPaused = false
+        Log.i(
+            LOG_TAG,
+            "[CAPTURE] starting accessibility screenshot loop frameInterval=${settings.frameIntervalMs}ms goCheck=${settings.goCheckIntervalMs}ms",
+        )
+
+        captureJob?.cancel()
+        captureJob = serviceScope.launch {
+            RuntimeStateBus.setCaptureRunning(true)
+            var nextDelayMs = settings.frameIntervalMs.coerceIn(120L, 1000L)
+            while (isActive) {
+                val frameId = ++frameCounter
+                val loopStartNs = SystemClock.elapsedRealtimeNanos()
+                val recognitionEnabled = RuntimeStateBus.state.value.recognitionEnabled
+                if (!recognitionEnabled) {
+                    if (!recognitionPaused) {
+                        recognitionPaused = true
+                        recognitionEngine.resetSession()
+                        lastLoggedPhase = GlyphPhase.IDLE
+                        RuntimeStateBus.setDrawRemainingCount(0)
+                        Log.i(LOG_TAG, "[CAPTURE] recognition paused; keep accessibility screenshot loop alive")
+                    }
+                    nextDelayMs = settings.frameIntervalMs.coerceIn(120L, 1000L)
+                    delay(nextDelayMs)
+                    continue
+                }
+                if (recognitionPaused) {
+                    recognitionPaused = false
+                    recognitionEngine.resetSession()
+                    lastLoggedPhase = GlyphPhase.IDLE
+                    Log.i(LOG_TAG, "[CAPTURE] recognition resumed")
+                }
+
+                val screenshotStartNs = SystemClock.elapsedRealtimeNanos()
+                val screenshotResult = AccessibilityScreenshotBus.requestFrame(
+                    frameId = frameId,
+                    timeoutMs = ACCESSIBILITY_SCREENSHOT_TIMEOUT_MS,
+                )
+                val screenshotDurationMs = elapsedMs(screenshotStartNs)
+                val bitmap = screenshotResult?.bitmap
+
+                if (bitmap != null) {
+                    consecutiveNullImageCount = 0
+                    val frameCapturedAtElapsedMs = screenshotResult.capturedAtElapsedMs
+                    val analysisStartNs = SystemClock.elapsedRealtimeNanos()
+                    val snapshot = runFrameAnalysis(
+                        frame = bitmap,
+                        frameId = frameId,
+                        frameCapturedAtElapsedMs = frameCapturedAtElapsedMs,
+                    )
+                    val analysisDurationMs = elapsedMs(analysisStartNs)
+                    nextDelayMs = if (snapshot?.goMatched == true && snapshot.phase == GlyphPhase.WAIT_GO) {
+                        settings.goCheckIntervalMs.coerceIn(30L, 300L)
+                    } else {
+                        settings.frameIntervalMs.coerceIn(120L, 1000L)
+                    }
+                    val totalDurationMs = elapsedMs(loopStartNs)
+                    Log.d(
+                        LOG_TAG,
+                        "[CAPTURE][F$frameId][ACC] screenshot=${screenshotDurationMs}ms analyze=${analysisDurationMs}ms total=${totalDurationMs}ms sleep=${nextDelayMs}ms phase=${snapshot?.phase ?: "NO_PROFILE"} glyph=${snapshot?.currentGlyph ?: "-"} conf=${snapshot?.currentConfidence ?: 0f} edges=${snapshot?.activeEdges?.size ?: 0} go=${snapshot?.goMatched ?: false} draw=${snapshot?.drawRequested ?: false} seq=${formatSequence(snapshot?.sequence.orEmpty())}",
+                    )
+                    if (totalDurationMs > nextDelayMs) {
+                        Log.w(
+                            LOG_TAG,
+                            "[CAPTURE][F$frameId][ACC] frame work ${totalDurationMs}ms exceeds sleep ${nextDelayMs}ms; pipeline is back-pressured",
+                        )
+                    }
+                } else {
+                    consecutiveNullImageCount += 1
+                    val error = screenshotResult?.error ?: if (!AccessibilityScreenshotBus.serviceConnected.value) {
+                        "service_disconnected"
+                    } else {
+                        "timeout_or_no_frame"
+                    }
+                    if (consecutiveNullImageCount <= 3 || consecutiveNullImageCount % 20 == 0) {
+                        Log.d(
+                            LOG_TAG,
+                            "[CAPTURE][F$frameId][ACC] screenshot unavailable (streak=$consecutiveNullImageCount error=$error) capture=${screenshotDurationMs}ms sleep=${nextDelayMs}ms",
+                        )
+                    }
+                }
+                delay(nextDelayMs)
+            }
+        }
+    }
+
     private fun runFrameAnalysis(
         frame: Bitmap,
         frameId: Long,
@@ -475,6 +623,7 @@ class CaptureForegroundService : Service() {
         if (foregroundStarted) {
             stopForeground(STOP_FOREGROUND_REMOVE)
             foregroundStarted = false
+            foregroundUsesAccessibilityType = false
         }
         stopSelf()
     }
@@ -553,8 +702,12 @@ class CaptureForegroundService : Service() {
         private const val CAPTURE_NOTIFICATION_ID = 3201
         private const val EXTRA_RESULT_CODE = "extra_result_code"
         private const val EXTRA_RESULT_DATA = "extra_result_data"
+        private const val ACCESSIBILITY_SCREENSHOT_TIMEOUT_MS = 2_000L
         const val ACTION_START = "moe.lyniko.glyphhacker.capture.START"
+        const val ACTION_START_ACCESSIBILITY = "moe.lyniko.glyphhacker.capture.START_ACCESSIBILITY"
         const val ACTION_RESTART = "moe.lyniko.glyphhacker.capture.RESTART"
+        const val ACTION_RESTART_ACCESSIBILITY = "moe.lyniko.glyphhacker.capture.RESTART_ACCESSIBILITY"
+        const val ACTION_RESET_TO_IDLE = "moe.lyniko.glyphhacker.capture.RESET_TO_IDLE"
         const val ACTION_STOP = "moe.lyniko.glyphhacker.capture.STOP"
 
         fun start(context: Context, permission: ProjectionPermission) {
@@ -573,6 +726,13 @@ class CaptureForegroundService : Service() {
             context.startService(intent)
         }
 
+        fun startAccessibility(context: Context) {
+            val intent = Intent(context, CaptureForegroundService::class.java).apply {
+                action = ACTION_START_ACCESSIBILITY
+            }
+            ContextCompat.startForegroundService(context, intent)
+        }
+
         fun restart(context: Context, permission: ProjectionPermission) {
             val intent = Intent(context, CaptureForegroundService::class.java).apply {
                 action = ACTION_RESTART
@@ -580,6 +740,20 @@ class CaptureForegroundService : Service() {
                 putExtra(EXTRA_RESULT_DATA, permission.data)
             }
             ContextCompat.startForegroundService(context, intent)
+        }
+
+        fun restartAccessibility(context: Context) {
+            val intent = Intent(context, CaptureForegroundService::class.java).apply {
+                action = ACTION_RESTART_ACCESSIBILITY
+            }
+            ContextCompat.startForegroundService(context, intent)
+        }
+
+        fun resetToIdle(context: Context) {
+            val intent = Intent(context, CaptureForegroundService::class.java).apply {
+                action = ACTION_RESET_TO_IDLE
+            }
+            context.startService(intent)
         }
     }
 }

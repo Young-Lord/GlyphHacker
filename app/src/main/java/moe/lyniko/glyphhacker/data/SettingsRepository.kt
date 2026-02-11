@@ -23,6 +23,12 @@ class SettingsRepository(context: Context) {
         refresh()
     }
 
+    suspend fun updateUseAccessibilityScreenshotCapture(enabled: Boolean) {
+        val safeEnabled = enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+        prefs.edit().putBoolean(KEY_USE_ACCESSIBILITY_SCREENSHOT_CAPTURE, safeEnabled).apply()
+        refresh()
+    }
+
     suspend fun updateFrameIntervalMs(value: Long) {
         prefs.edit().putLong(KEY_FRAME_INTERVAL_MS, value.coerceIn(120L, 1000L)).apply()
         refresh()
@@ -224,6 +230,7 @@ class SettingsRepository(context: Context) {
             val root = JSONObject(jsonText)
             val config = root.optJSONObject("config") ?: root
             val mode = config.optString("recognitionMode", RecognitionMode.EDGE_SET.name).toRecognitionMode()
+            val useAccessibilityScreenshotCapture = config.optBoolean("useAccessibilityScreenshotCapture", false)
             val frameInterval = config.optLong("frameIntervalMs", 300L)
             val goInterval = config.optLong("goCheckIntervalMs", 90L)
             val debugPlaybackSpeed = config.optDouble("debugPlaybackSpeed", 1.0).toFloat()
@@ -281,6 +288,10 @@ class SettingsRepository(context: Context) {
 
             prefs.edit()
                 .putString(KEY_RECOGNITION_MODE, mode.name)
+                .putBoolean(
+                    KEY_USE_ACCESSIBILITY_SCREENSHOT_CAPTURE,
+                    useAccessibilityScreenshotCapture && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
+                )
                 .putLong(KEY_FRAME_INTERVAL_MS, frameInterval.coerceIn(120L, 1000L))
                 .putLong(KEY_GO_CHECK_INTERVAL_MS, goInterval.coerceIn(30L, 300L))
                 .putFloat(KEY_DEBUG_PLAYBACK_SPEED, debugPlaybackSpeed.coerceIn(0.25f, 4.0f))
@@ -324,6 +335,11 @@ class SettingsRepository(context: Context) {
         return AppSettings(
             recognitionMode = prefs.getString(KEY_RECOGNITION_MODE, RecognitionMode.EDGE_SET.name)
                 .toRecognitionMode(),
+            useAccessibilityScreenshotCapture = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                prefs.getBoolean(KEY_USE_ACCESSIBILITY_SCREENSHOT_CAPTURE, false)
+            } else {
+                false
+            },
             frameIntervalMs = prefs.getLong(KEY_FRAME_INTERVAL_MS, 300L),
             goCheckIntervalMs = prefs.getLong(KEY_GO_CHECK_INTERVAL_MS, 90L),
             debugPlaybackSpeed = prefs.getFloat(KEY_DEBUG_PLAYBACK_SPEED, 1.0f),
@@ -360,6 +376,7 @@ class SettingsRepository(context: Context) {
     private companion object {
         const val FILE_NAME = "glyph_hacker_settings"
         const val KEY_RECOGNITION_MODE = "recognition_mode"
+        const val KEY_USE_ACCESSIBILITY_SCREENSHOT_CAPTURE = "use_accessibility_screenshot_capture"
         const val KEY_FRAME_INTERVAL_MS = "frame_interval_ms"
         const val KEY_GO_CHECK_INTERVAL_MS = "go_check_interval_ms"
         const val KEY_DEBUG_PLAYBACK_SPEED = "debug_playback_speed"
@@ -515,6 +532,7 @@ private fun ReadyBoxProfile.toJson(): String {
 private fun AppSettings.toJson(): JSONObject {
     val json = JSONObject()
     json.put("recognitionMode", recognitionMode.name)
+    json.put("useAccessibilityScreenshotCapture", useAccessibilityScreenshotCapture)
     json.put("frameIntervalMs", frameIntervalMs)
     json.put("goCheckIntervalMs", goCheckIntervalMs)
     json.put("debugPlaybackSpeed", debugPlaybackSpeed.toDouble())

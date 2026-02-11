@@ -10,6 +10,7 @@ enum class RecognitionMode {
 
 data class AppSettings(
     val recognitionMode: RecognitionMode = RecognitionMode.EDGE_SET,
+    val useAccessibilityScreenshotCapture: Boolean = false,
     val frameIntervalMs: Long = 300L,
     val goCheckIntervalMs: Long = 90L,
     val debugPlaybackSpeed: Float = 1.0f,

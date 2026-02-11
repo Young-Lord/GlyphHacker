@@ -33,7 +33,7 @@
             android:name=".capture.CaptureForegroundService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="mediaProjection" />
+            android:foregroundServiceType="mediaProjection|dataSync" />
 
         <service
             android:name=".overlay.OverlayControlService"
