@@ -1,0 +1,35 @@
+# Introduction to Glyph Hack in Ingress
+
+## Command Input
+
+Before the glyph hack begins, you’ll see the words “Command channel open…” on the screen. At this point, you can leave the portal’s range without the hack failing. While the command channel is open, you will have a couple of seconds to input a glyph to alter the glyph hack. After completing a command glyph, you’ll be given a couple more seconds to enter another if you want. Note that you can only use one glyph from each command group; entering another glyph from the same group will cancel the previous one. A “Bypass” button also appears on the screen during this time. Tapping it cancels the glyph hack and performs a regular hack instead, and any command glyphs you may have entered will be ignored.
+
+Below is a list of the known command groups and the effect of each glyph:
+
+- LESS prevents the portal from yielding a key. This may be handy if you have no use for a key to the portal you’re hacking. You can accomplish the same without glyph hacking by swiping diagonally up and right from the “Hack” button.
+- MORE requests a key from this portal, even if you already hold one for it. This won’t always be successful; it is believed that the success rate is the same as for a regular hack on a portal for which you don’t currently hold a key (about 75%). Unlike regular hacking, when it succeeds this may grant as many as three keys. You can accomplish the same without glyph hacking by swiping up from the “Hack” button.
+- SPEED requests that this glyph hack yield only keys. Unlike the other glyphs in this command group, there is no swipe shortcut from the “Hack” button to accomplish this without glyph hacking.
+- SIMPLE causes glyphs to be displayed for a longer time. This may be useful if you find glyph hacking too difficult and want more time to memorize them. Note that you do not get any more time to draw the glyph.
+- COMPLEX causes glyphs and the subsequent countdown to display very quickly. The time given to draw the glyphs remains unchanged. This command is useful for experts who want to glyph hack multiple portals faster.
+
+
+## Glyph Display
+
+The scanner will now display between one to five glyphs, one at a time. The higher the portal’s level, the more glyphs are shown (see the table below). Each glyph is normally shown for a little less than once second; this time is increased if you entered SIMPLE during the command input phase, and reduced if you entered COMPLEX. Once all the glyphs have been shown, a “GO” prompt will appear, and the next phase begins.
+
+
+## Glyph Input
+
+In this phase, you must draw the glyphs you saw during the glyph display phase in the same order. A countdown timer will be displayed, and the higher the portal’s level, the less time you will have. The timer turns red when your time is almost up. When drawing the glyphs, make sure to touch each node; skimming past one will cause the glyph to be malformed and you won’t get credit for it, even if the resulting glyph looks the same. “Backtracking” to get a missed node is permitted, though, as long as the resulting glyph is well-formed.
+
+After the first glyph is drawn, a “Redo” button appears (although it probably would have been clearer to label it “Undo”). Tapping it will undo your last draw operation, allowing you to retry a botched glyph. You can tap it multiple times, undoing all drawn glyphs if you wish. Only the last attempt at any one glyph is counted for scoring. The timer is unaffected, so redoing glyphs comes at the cost of losing additional time. If you need to undo the last glyph, you must press the button quickly, as you only have a moment before the glyph sequence is submitted to the server, at which point you cannot change it.
+
+The glyph for IMPERFECT has a trick to it. The bottom-left and top-right nodes in the glyph are connected twice, once with the center node between and once without.
+
+## Scoring
+
+When you’ve drawn all the glyphs or the timer runs out, your performance is then evaluated. The glyphs are displayed one at at time: in yellow if drawn correctly, and red if not. Tap the “Done” button if you wish to skip the scoring phase.
+
+The hacking bonus starts at 0% and increases for each glyph you drew correctly. Each correct glyph is worth a +10% hacking bonus. If you get all the glyphs in the sequence correct, it further increases your hacking bonus (see the table below). Incorrect glyphs neither increase nor decrease your hacking bonus. Even if you get them all wrong, you’ll still get the items you would have gotten from a regular hack. Higher hacking bonuses improve the average hack yield, though individual yields can vary significantly.
+
+A speed bonus will be awarded if you draw all the glyphs correctly. It is based on the amount of time left on the clock: the faster you draw the glyphs, the greater your speed bonus will be. The speed bonus further increases your hack yield. If you get even one glyph wrong, you will receive no speed bonus.

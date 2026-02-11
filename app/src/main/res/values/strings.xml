@@ -1,0 +1,22 @@
+<resources>
+    <string name="app_name">Glyph Hacker</string>
+    <string name="capture_notification_channel">Glyph Capture</string>
+    <string name="capture_notification_title">Glyph 识别中</string>
+    <string name="capture_notification_text">正在采样屏幕并识别 Glyph 序列</string>
+
+    <string name="overlay_notification_channel">Glyph Overlay</string>
+    <string name="overlay_notification_title">Glyph 悬浮控制已启用</string>
+    <string name="overlay_notification_text">可在任意界面控制启动与停止</string>
+
+    <string name="overlay_title">Glyph 控制面板</string>
+    <string name="overlay_status_idle">等待开始</string>
+    <string name="overlay_action_start">开始识别</string>
+    <string name="overlay_action_stop">停止识别</string>
+    <string name="overlay_action_close">关闭面板</string>
+
+    <string name="status_running">运行中</string>
+    <string name="status_stopped">已停止</string>
+    <string name="error_projection_permission_missing">未找到录屏授权，请回到应用先授权</string>
+
+    <string name="accessibility_service_description">用于在识别完成后自动绘制 Glyph</string>
+</resources>
