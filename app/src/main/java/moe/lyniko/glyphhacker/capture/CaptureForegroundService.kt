@@ -35,8 +35,6 @@ import kotlinx.coroutines.launch
 import moe.lyniko.glyphhacker.MainActivity
 import moe.lyniko.glyphhacker.R
 import moe.lyniko.glyphhacker.accessibility.AccessibilityScreenshotBus
-import moe.lyniko.glyphhacker.accessibility.DrawCommand
-import moe.lyniko.glyphhacker.accessibility.DrawCommandBus
 import moe.lyniko.glyphhacker.data.AppSettings
 import moe.lyniko.glyphhacker.data.RuntimeStateBus
 import moe.lyniko.glyphhacker.data.SettingsRepository
@@ -61,7 +59,6 @@ class CaptureForegroundService : Service() {
     private var consecutiveNullImageCount: Int = 0
     private var calibrationMissingLogged: Boolean = false
     private var lastLoggedPhase: GlyphPhase = GlyphPhase.IDLE
-    private var commandOpenPresetIssued: Boolean = false
     private var foregroundStarted: Boolean = false
     private var foregroundUsesAccessibilityType: Boolean = false
     private var recognitionPaused: Boolean = false
@@ -81,7 +78,6 @@ class CaptureForegroundService : Service() {
     }
 
     private var settingsJob: Job? = null
-    private var drawCompletionJob: Job? = null
     private var captureJob: Job? = null
 
     override fun onCreate() {
@@ -89,7 +85,6 @@ class CaptureForegroundService : Service() {
         Log.i(LOG_TAG, "[CAPTURE] service created")
         createNotificationChannel()
         observeSettings()
-        observeDrawCompletions()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -167,7 +162,6 @@ class CaptureForegroundService : Service() {
             ACTION_RESET_TO_IDLE -> {
                 Log.i(LOG_TAG, "[CAPTURE] received reset-to-idle action")
                 recognitionEngine.resetSession()
-                commandOpenPresetIssued = false
                 recognitionPaused = false
                 RuntimeStateBus.setRecognitionEnabled(true)
                 val running = captureJob?.isActive == true && foregroundStarted
@@ -195,7 +189,6 @@ class CaptureForegroundService : Service() {
         Log.i(LOG_TAG, "[CAPTURE] service destroyed")
         stopCaptureResources()
         settingsJob?.cancel()
-        drawCompletionJob?.cancel()
         captureJob?.cancel()
         RuntimeStateBus.reset()
         foregroundStarted = false
@@ -212,25 +205,6 @@ class CaptureForegroundService : Service() {
                 Log.d(
                     LOG_TAG,
                     "[CAPTURE] settings frameInterval=${next.frameIntervalMs}ms goCheck=${next.goCheckIntervalMs}ms stable=${next.stableFrameCount} edgeTh=${next.edgeActivationThreshold} minLine=${next.minimumLineBrightness} accessibilityShot=${next.useAccessibilityScreenshotCapture}",
-                )
-            }
-        }
-    }
-
-    private fun observeDrawCompletions() {
-        drawCompletionJob?.cancel()
-        drawCompletionJob = serviceScope.launch {
-            DrawCommandBus.completions.collectLatest { completion ->
-                if (!completion.doneButtonTapped) {
-                    return@collectLatest
-                }
-                recognitionEngine.resetSession()
-                RuntimeStateBus.setIdle()
-                lastLoggedPhase = GlyphPhase.IDLE
-                commandOpenPresetIssued = false
-                Log.i(
-                    LOG_TAG,
-                    "[CAPTURE][F${completion.sourceFrameId}] done tap confirmed; reset to IDLE immediately",
                 )
             }
         }
@@ -576,74 +550,10 @@ class CaptureForegroundService : Service() {
             lastLoggedPhase = snapshot.phase
         }
 
-        if (snapshot.phase == GlyphPhase.COMMAND_OPEN) {
-            if (!commandOpenPresetIssued) {
-                val presetGlyphs = buildCommandOpenPresetGlyphs(settings)
-                commandOpenPresetIssued = true
-                if (presetGlyphs.isNotEmpty()) {
-                    val emittedAtElapsedMs = SystemClock.elapsedRealtime()
-                    val emitted = DrawCommandBus.tryEmit(
-                        DrawCommand(
-                            recognitionMode = settings.recognitionMode,
-                            glyphNames = presetGlyphs,
-                            calibrationProfile = profile,
-                            frameWidth = frame.width,
-                            frameHeight = frame.height,
-                            edgeDurationMs = settings.drawEdgeDurationMs,
-                            glyphGapMs = settings.drawGlyphGapMs,
-                            doneButtonXPercent = settings.doneButtonXPercent,
-                            doneButtonYPercent = settings.doneButtonYPercent,
-                            sourceFrameId = frameId,
-                            sourceFrameCapturedAtElapsedMs = frameCapturedAtElapsedMs,
-                            sourceFrameAnalyzedAtElapsedMs = emittedAtElapsedMs,
-                            emittedAtElapsedMs = emittedAtElapsedMs,
-                        )
-                    )
-                    val captureToEmitMs = (emittedAtElapsedMs - frameCapturedAtElapsedMs).coerceAtLeast(0L)
-                    Log.i(
-                        LOG_TAG,
-                        "[CAPTURE][F$frameId] command-open preset seq=${formatSequence(presetGlyphs)} emitted=$emitted process=${processDurationMs}ms captureToEmit=${captureToEmitMs}ms",
-                    )
-                    if (!emitted) {
-                        Log.w(LOG_TAG, "[CAPTURE][F$frameId] command-open preset dropped: DrawCommandBus buffer full")
-                    }
-                }
-            }
-        } else if (snapshot.phase == GlyphPhase.IDLE) {
-            commandOpenPresetIssued = false
-        }
-
-        if (snapshot.drawRequested && snapshot.sequence.isNotEmpty()) {
-            val emittedAtElapsedMs = SystemClock.elapsedRealtime()
-            val emitted = DrawCommandBus.tryEmit(
-                DrawCommand(
-                    recognitionMode = settings.recognitionMode,
-                    glyphNames = snapshot.sequence,
-                    calibrationProfile = profile,
-                    frameWidth = frame.width,
-                    frameHeight = frame.height,
-                    edgeDurationMs = settings.drawEdgeDurationMs,
-                    glyphGapMs = settings.drawGlyphGapMs,
-                    doneButtonXPercent = settings.doneButtonXPercent,
-                    doneButtonYPercent = settings.doneButtonYPercent,
-                    sourceFrameId = frameId,
-                    sourceFrameCapturedAtElapsedMs = frameCapturedAtElapsedMs,
-                    sourceFrameAnalyzedAtElapsedMs = emittedAtElapsedMs,
-                    emittedAtElapsedMs = emittedAtElapsedMs,
-                )
-            )
-            val captureToEmitMs = (emittedAtElapsedMs - frameCapturedAtElapsedMs).coerceAtLeast(0L)
-            Log.i(
-                LOG_TAG,
-                "[CAPTURE][F$frameId] drawRequested seq=${formatSequence(snapshot.sequence)} emitted=$emitted process=${processDurationMs}ms captureToEmit=${captureToEmitMs}ms",
-            )
-            if (!emitted) {
-                Log.w(LOG_TAG, "[CAPTURE][F$frameId] draw command dropped: DrawCommandBus buffer full")
-            }
-        } else if (processDurationMs >= 120L) {
+        if (processDurationMs >= 120L) {
             Log.w(
                 LOG_TAG,
-                "[CAPTURE][F$frameId] recognition processing took ${processDurationMs}ms without draw request",
+                "[CAPTURE][F$frameId] recognition processing took ${processDurationMs}ms",
             )
         }
         frame.recycle()
@@ -654,7 +564,6 @@ class CaptureForegroundService : Service() {
         Log.i(LOG_TAG, "[CAPTURE] pausing capture loop but keeping projection")
         stopCaptureLoopOnly()
         recognitionEngine.resetSession()
-        commandOpenPresetIssued = false
         RuntimeStateBus.reset()
     }
 
@@ -662,7 +571,6 @@ class CaptureForegroundService : Service() {
         Log.i(LOG_TAG, "[CAPTURE] stopSelfSafely invoked")
         stopCaptureResources()
         RuntimeStateBus.reset()
-        commandOpenPresetIssued = false
         if (foregroundStarted) {
             stopForeground(STOP_FOREGROUND_REMOVE)
             foregroundStarted = false
@@ -703,13 +611,6 @@ class CaptureForegroundService : Service() {
 
     private fun formatSequence(sequence: List<String>): String {
         return if (sequence.isEmpty()) "-" else sequence.joinToString(">")
-    }
-
-    private fun buildCommandOpenPresetGlyphs(settings: AppSettings): List<String> {
-        val result = ArrayList<String>(2)
-        settings.commandOpenPrimaryAction.glyphName?.let(result::add)
-        settings.commandOpenSecondaryAction.glyphName?.let(result::add)
-        return result
     }
 
     private fun requestProjectionPermission() {
