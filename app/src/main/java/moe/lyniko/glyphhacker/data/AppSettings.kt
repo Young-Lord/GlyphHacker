@@ -90,4 +90,10 @@ data class AppSettings(
     val startTemplateBase64: String? = null,
     val readyBoxProfile: ReadyBoxProfile? = null,
     val calibrationProfile: CalibrationProfile? = null,
+    /** 节点 patch 匹配边长（像素），0 = 禁用 patch 匹配。 */
+    val nodePatchSize: Int = 0,
+    /** 节点 patch MAE 阈值，低于此值视为匹配成功。 */
+    val nodePatchMaxMae: Float = 12f,
+    /** WAIT_GO 超时时间（毫秒），超时后重置回 IDLE。0 = 不超时。 */
+    val waitGoTimeoutMs: Long = 5000L,
 )

@@ -3,14 +3,18 @@ package moe.lyniko.glyphhacker.data
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.Build
+import android.util.Base64
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import moe.lyniko.glyphhacker.glyph.CalibrationProfile
+import moe.lyniko.glyphhacker.glyph.NodePatch
 import moe.lyniko.glyphhacker.glyph.NodePosition
 import moe.lyniko.glyphhacker.glyph.ReadyBoxProfile
 import org.json.JSONArray
 import org.json.JSONObject
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.time.Instant
 
 class SettingsRepository(context: Context) {
@@ -223,6 +227,21 @@ class SettingsRepository(context: Context) {
         refresh()
     }
 
+    suspend fun updateNodePatchSize(value: Int) {
+        prefs.edit().putInt(KEY_NODE_PATCH_SIZE, value.coerceIn(0, 80)).apply()
+        refresh()
+    }
+
+    suspend fun updateNodePatchMaxMae(value: Float) {
+        prefs.edit().putFloat(KEY_NODE_PATCH_MAX_MAE, value.coerceIn(1f, 80f)).apply()
+        refresh()
+    }
+
+    suspend fun updateWaitGoTimeoutMs(value: Long) {
+        prefs.edit().putLong(KEY_WAIT_GO_TIMEOUT_MS, value.coerceIn(0L, 30000L)).apply()
+        refresh()
+    }
+
     suspend fun updateTemplateImport(
         sourceUri: String?,
         base64: String?,
@@ -355,6 +374,9 @@ class SettingsRepository(context: Context) {
                 "progressBottomPercent",
                 (readyBoxProfile?.progressBottomNorm?.times(100f) ?: 10.5f).toDouble(),
             ).toFloat()
+            val nodePatchSize = config.optInt("nodePatchSize", 0)
+            val nodePatchMaxMae = config.optDouble("nodePatchMaxMae", 12.0).toFloat()
+            val waitGoTimeoutMs = config.optLong("waitGoTimeoutMs", 5000L)
 
             prefs.edit()
                 .putString(KEY_RECOGNITION_MODE, mode.name)
@@ -399,6 +421,9 @@ class SettingsRepository(context: Context) {
                 .putNullableString(KEY_TEMPLATE_BASE64, templateBase64)
                 .putNullableString(KEY_CALIBRATION, calibration?.toJson())
                 .putNullableString(KEY_READY_BOX_PROFILE, readyBoxProfile?.toJson())
+                .putInt(KEY_NODE_PATCH_SIZE, nodePatchSize.coerceIn(0, 80))
+                .putFloat(KEY_NODE_PATCH_MAX_MAE, nodePatchMaxMae.coerceIn(1f, 80f))
+                .putLong(KEY_WAIT_GO_TIMEOUT_MS, waitGoTimeoutMs.coerceIn(0L, 30000L))
                 .apply()
             refresh()
         }
@@ -473,6 +498,9 @@ class SettingsRepository(context: Context) {
             startTemplateBase64 = prefs.getString(KEY_TEMPLATE_BASE64, null),
             readyBoxProfile = prefs.getString(KEY_READY_BOX_PROFILE, null).toReadyBoxProfile(),
             calibrationProfile = prefs.getString(KEY_CALIBRATION, null).toCalibrationProfile(),
+            nodePatchSize = prefs.getInt(KEY_NODE_PATCH_SIZE, 0).coerceIn(0, 80),
+            nodePatchMaxMae = prefs.getFloat(KEY_NODE_PATCH_MAX_MAE, 12f).coerceIn(1f, 80f),
+            waitGoTimeoutMs = prefs.getLong(KEY_WAIT_GO_TIMEOUT_MS, 5000L).coerceIn(0L, 30000L),
         )
     }
 
@@ -516,6 +544,9 @@ class SettingsRepository(context: Context) {
         const val KEY_TEMPLATE_BASE64 = "start_template_base64"
         const val KEY_READY_BOX_PROFILE = "ready_box_profile_json"
         const val KEY_CALIBRATION = "calibration_profile_json"
+        const val KEY_NODE_PATCH_SIZE = "node_patch_size"
+        const val KEY_NODE_PATCH_MAX_MAE = "node_patch_max_mae"
+        const val KEY_WAIT_GO_TIMEOUT_MS = "wait_go_timeout_ms"
     }
 }
 
@@ -550,6 +581,7 @@ private fun String?.toCalibrationProfile(): CalibrationProfile? {
 
 private fun JSONObject.toCalibrationProfile(): CalibrationProfile {
     val nodes = getJSONArray("nodes").toNodePositions()
+    val patches = optJSONArray("nodePatches")?.toNodePatches() ?: emptyList()
     return CalibrationProfile(
         sourceWidth = getInt("sourceWidth"),
         sourceHeight = getInt("sourceHeight"),
@@ -559,6 +591,7 @@ private fun JSONObject.toCalibrationProfile(): CalibrationProfile {
         roiTop = optDouble("roiTop", 0.0).toFloat(),
         roiRight = optDouble("roiRight", 1.0).toFloat(),
         roiBottom = optDouble("roiBottom", 1.0).toFloat(),
+        nodePatches = patches,
     )
 }
 
@@ -595,7 +628,44 @@ private fun CalibrationProfile.toJson(): String {
         nodes.put(item)
     }
     json.put("nodes", nodes)
+    if (nodePatches.isNotEmpty()) {
+        val patchesArray = JSONArray()
+        nodePatches.sortedBy { it.nodeIndex }.forEach { patch ->
+            val item = JSONObject()
+            item.put("nodeIndex", patch.nodeIndex)
+            item.put("size", patch.size)
+            item.put("luma", floatArrayToBase64(patch.luma))
+            patchesArray.put(item)
+        }
+        json.put("nodePatches", patchesArray)
+    }
     return json.toString()
+}
+
+private fun JSONArray.toNodePatches(): List<NodePatch> {
+    val result = ArrayList<NodePatch>(length())
+    for (i in 0 until length()) {
+        val item = getJSONObject(i)
+        val nodeIndex = item.getInt("nodeIndex")
+        val size = item.getInt("size")
+        val luma = base64ToFloatArray(item.getString("luma"))
+        if (luma.size == size * size) {
+            result.add(NodePatch(nodeIndex = nodeIndex, size = size, luma = luma))
+        }
+    }
+    return result.sortedBy { it.nodeIndex }
+}
+
+private fun floatArrayToBase64(array: FloatArray): String {
+    val buffer = ByteBuffer.allocate(array.size * 4).order(ByteOrder.LITTLE_ENDIAN)
+    array.forEach { buffer.putFloat(it) }
+    return Base64.encodeToString(buffer.array(), Base64.NO_WRAP)
+}
+
+private fun base64ToFloatArray(encoded: String): FloatArray {
+    val bytes = Base64.decode(encoded, Base64.NO_WRAP)
+    val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+    return FloatArray(bytes.size / 4) { buffer.getFloat() }
 }
 
 private fun String?.toReadyBoxProfile(): ReadyBoxProfile? {
@@ -692,6 +762,9 @@ private fun AppSettings.toJson(): JSONObject {
     readyBoxProfile?.let {
         json.put("readyBoxProfile", JSONObject(it.toJson()))
     }
+    json.put("nodePatchSize", nodePatchSize)
+    json.put("nodePatchMaxMae", nodePatchMaxMae.toDouble())
+    json.put("waitGoTimeoutMs", waitGoTimeoutMs)
     return json
 }
 

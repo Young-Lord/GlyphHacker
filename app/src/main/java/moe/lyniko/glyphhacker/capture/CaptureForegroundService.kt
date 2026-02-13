@@ -579,6 +579,9 @@ class CaptureForegroundService : Service() {
                     progressBottomPercent = settings.progressBottomPercent,
                     suppressGlyphTracking = commandPresetDrawInProgress ||
                         SystemClock.elapsedRealtime() < suppressGlyphTrackingUntilElapsedMs,
+                    nodePatchSize = settings.nodePatchSize,
+                    nodePatchMaxMae = settings.nodePatchMaxMae,
+                    waitGoTimeoutMs = settings.waitGoTimeoutMs,
                 ),
             readyBoxProfile = settings.readyBoxProfile,
         )

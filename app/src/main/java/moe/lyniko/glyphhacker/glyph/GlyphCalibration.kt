@@ -102,6 +102,9 @@ object GlyphCalibration {
             height,
         )
 
+        val patchSize = (estimatedRadius * 2).toInt().coerceIn(4, min(width, height) / 4)
+        val nodePatches = extractNodePatches(indexedNodes, luma, width, height, patchSize)
+
         return CalibrationProfile(
             sourceWidth = width,
             sourceHeight = height,
@@ -111,6 +114,7 @@ object GlyphCalibration {
             roiTop = roi[1],
             roiRight = roi[2],
             roiBottom = roi[3],
+            nodePatches = nodePatches,
         )
     }
 
@@ -283,6 +287,39 @@ object GlyphCalibration {
             }
         }
         return 190
+    }
+
+    /**
+     * 从标定帧的亮度数组中，为每个节点裁出 [patchSize] x [patchSize] 的亮度 patch。
+     * patch 中心对齐节点质心，超出图像边界的像素填 0。
+     */
+    private fun extractNodePatches(
+        nodes: List<NodePosition>,
+        luma: IntArray,
+        width: Int,
+        height: Int,
+        patchSize: Int,
+    ): List<NodePatch> {
+        val half = patchSize / 2
+        return nodes.sortedBy { it.index }.map { node ->
+            val cx = node.x.toInt()
+            val cy = node.y.toInt()
+            val patch = FloatArray(patchSize * patchSize)
+            for (py in 0 until patchSize) {
+                val srcY = cy - half + py
+                for (px in 0 until patchSize) {
+                    val srcX = cx - half + px
+                    patch[py * patchSize + px] = if (
+                        srcX in 0 until width && srcY in 0 until height
+                    ) {
+                        luma[srcY * width + srcX].toFloat()
+                    } else {
+                        0f
+                    }
+                }
+            }
+            NodePatch(nodeIndex = node.index, size = patchSize, luma = patch)
+        }
     }
 
     private fun luminance(color: Int): Int {

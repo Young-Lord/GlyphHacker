@@ -10,6 +10,31 @@ data class NodePosition(
 )
 
 /**
+ * 标定帧中某个节点周围的亮度 patch，用于 command channel open 的逐像素相似度匹配。
+ *
+ * [size] 为正方形边长（像素），[luma] 按行优先存储，长度 = size * size。
+ * 坐标原点为节点质心向左上偏移 size/2 的位置。
+ */
+data class NodePatch(
+    val nodeIndex: Int,
+    val size: Int,
+    val luma: FloatArray,
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is NodePatch) return false
+        return nodeIndex == other.nodeIndex && size == other.size && luma.contentEquals(other.luma)
+    }
+
+    override fun hashCode(): Int {
+        var result = nodeIndex
+        result = 31 * result + size
+        result = 31 * result + luma.contentHashCode()
+        return result
+    }
+}
+
+/**
  * 从 command channel open 截图（标定帧）中提取的节点布局信息。
  *
  * 标定帧即 Ingress 长按 HACK 后 command channel 刚打开时的画面：纯黑背景 + 11 个高亮节点。
@@ -24,6 +49,8 @@ data class CalibrationProfile(
     val roiTop: Float,
     val roiRight: Float,
     val roiBottom: Float,
+    /** 标定帧中每个节点周围的亮度 patch，用于 IDLE->COMMAND_OPEN 的逐像素相似度验证。 */
+    val nodePatches: List<NodePatch> = emptyList(),
 ) {
     fun scaledNodes(targetWidth: Int, targetHeight: Int): List<NodePosition> {
         val sx = targetWidth / sourceWidth.toFloat()

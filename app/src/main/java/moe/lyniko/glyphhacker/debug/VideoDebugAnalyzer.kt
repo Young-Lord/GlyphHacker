@@ -224,6 +224,9 @@ class VideoDebugAnalyzer(
             progressTopPercent = progressTopPercent,
             progressBottomPercent = progressBottomPercent,
             suppressGlyphTracking = false,
+            nodePatchSize = nodePatchSize,
+            nodePatchMaxMae = nodePatchMaxMae,
+            waitGoTimeoutMs = waitGoTimeoutMs,
         )
     }
 

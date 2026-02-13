@@ -629,9 +629,12 @@ class MainActivity : ComponentActivity() {
                                     onSetMinMatchScore = viewModel::setMinimumMatchScore,
                                     onSetTemplateThreshold = viewModel::setStartTemplateThreshold,
                                     onSetCommandOpenMaxLuma = viewModel::setCommandOpenMaxLuma,
+                                    onSetNodePatchSize = viewModel::setNodePatchSize,
+                                    onSetNodePatchMaxMae = viewModel::setNodePatchMaxMae,
                                     onSetGlyphDisplayMinLuma = viewModel::setGlyphDisplayMinLuma,
                                     onSetGlyphDisplayTopBarsMinLuma = viewModel::setGlyphDisplayTopBarsMinLuma,
                                     onSetGoColorDelta = viewModel::setGoColorDeltaThreshold,
+                                    onSetWaitGoTimeoutMs = viewModel::setWaitGoTimeoutMs,
                                     onSetCountdownVisibleThreshold = viewModel::setCountdownVisibleThreshold,
                                     onSetProgressVisibleThreshold = viewModel::setProgressVisibleThreshold,
                                     onSetFirstBoxTopPercent = viewModel::setFirstBoxTopPercent,
@@ -1002,9 +1005,12 @@ private fun SettingsPage(
     onSetMinMatchScore: (Float) -> Unit,
     onSetTemplateThreshold: (Float) -> Unit,
     onSetCommandOpenMaxLuma: (Float) -> Unit,
+    onSetNodePatchSize: (Int) -> Unit,
+    onSetNodePatchMaxMae: (Float) -> Unit,
     onSetGlyphDisplayMinLuma: (Float) -> Unit,
     onSetGlyphDisplayTopBarsMinLuma: (Float) -> Unit,
     onSetGoColorDelta: (Float) -> Unit,
+    onSetWaitGoTimeoutMs: (Long) -> Unit,
     onSetCountdownVisibleThreshold: (Float) -> Unit,
     onSetProgressVisibleThreshold: (Float) -> Unit,
     onSetFirstBoxTopPercent: (Float) -> Unit,
@@ -1123,6 +1129,20 @@ private fun SettingsPage(
                     onChange = onSetCommandOpenMaxLuma,
                 )
                 SettingSlider(
+                    label = "节点Patch匹配边长 ${settings.nodePatchSize}px",
+                    value = settings.nodePatchSize.toFloat(),
+                    valueRange = 0f..60f,
+                    description = "亮度通过后，对11个节点周围区域逐像素匹配标定帧。0=禁用。需重新标定才能生效。",
+                    onChange = { onSetNodePatchSize(it.toInt()) },
+                )
+                SettingSlider(
+                    label = "节点Patch MAE阈值 ${settings.nodePatchMaxMae.format2()}",
+                    value = settings.nodePatchMaxMae,
+                    valueRange = 1f..60f,
+                    description = "节点区域平均绝对误差低于此值视为匹配成功（越小越严格）。",
+                    onChange = onSetNodePatchMaxMae,
+                )
+                SettingSlider(
                     label = "进入GLYPH_DISPLAY首框亮度 ${settings.glyphDisplayMinLuma.format2()}",
                     value = settings.glyphDisplayMinLuma,
                     valueRange = 0f..40f,
@@ -1142,6 +1162,13 @@ private fun SettingsPage(
                     valueRange = 1f..60f,
                     description = "用于 WAIT_GO -> AUTO_DRAW：在 WAIT_GO 阶段首框亮度达到该值且序列非空时触发自动绘制。",
                     onChange = onSetGoColorDelta,
+                )
+                SettingSlider(
+                    label = "WAIT_GO超时 ${settings.waitGoTimeoutMs / 1000f}s",
+                    value = settings.waitGoTimeoutMs.toFloat(),
+                    valueRange = 0f..15000f,
+                    description = "WAIT_GO 阶段超过该时长未触发绘制则重置回 IDLE。0=不超时。",
+                    onChange = { onSetWaitGoTimeoutMs(it.toLong()) },
                 )
                 SettingSlider(
                     label = "倒计时出现阈值 ${settings.countdownVisibleThreshold.format2()}",

@@ -3,6 +3,7 @@ package moe.lyniko.glyphhacker.glyph
 import android.graphics.Bitmap
 import android.os.SystemClock
 import android.util.Log
+import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.max
 
@@ -36,6 +37,7 @@ class GlyphRecognitionEngine {
     private var glyphDisplayLatched: Boolean = false
     private var glyphGapFrames: Int = 0
     private var processedFrameCount: Long = 0L
+    private var waitGoEnteredAtNs: Long = 0L
 
     fun resetSession() {
         phase = GlyphPhase.IDLE
@@ -49,6 +51,7 @@ class GlyphRecognitionEngine {
         glyphDisplayLatched = false
         glyphGapFrames = 0
         processedFrameCount = 0L
+        waitGoEnteredAtNs = 0L
     }
 
     fun snapshotSessionState(): SessionState {
@@ -166,11 +169,34 @@ class GlyphRecognitionEngine {
             progressRect != null &&
             countdownLuma >= settings.countdownVisibleThreshold &&
             progressLuma >= settings.progressVisibleThreshold
-        val commandOpenDetected = firstBoxLuma < settings.commandOpenMaxLuma &&
+        val lumaCommandOpen = firstBoxLuma < settings.commandOpenMaxLuma &&
             countdownLuma < settings.commandOpenMaxLuma &&
             progressLuma < settings.commandOpenMaxLuma
         val glyphDisplayTransitionFrame = firstBoxLuma > settings.glyphDisplayMinLuma &&
             activeEdges.isNotEmpty()
+
+        // 亮度预判通过后，可选地进行节点 patch 逐像素相似度匹配
+        val patchMatchEnabled = settings.nodePatchSize > 0 &&
+            calibrationProfile.nodePatches.isNotEmpty()
+        var patchMae = -1f
+        val commandOpenDetected = if (lumaCommandOpen && patchMatchEnabled) {
+            patchMae = computeNodePatchMae(
+                luma, calibrationProfile, nodes, settings.nodePatchSize, settings.nodePatchMaxMae,
+            )
+            val matched = patchMae <= settings.nodePatchMaxMae
+            if (frameId % 5L == 0L || (!commandOpenSeen && matched)) {
+                Log.d(
+                    LOG_TAG,
+                    "[ENGINE][F$frameId][PATCH] mae=%.2f threshold=%.2f matched=$matched".format(
+                        patchMae, settings.nodePatchMaxMae,
+                    ),
+                )
+            }
+            matched
+        } else {
+            lumaCommandOpen
+        }
+
         if (commandOpenDetected) {
             commandOpenSeen = true
         }
@@ -201,24 +227,48 @@ class GlyphRecognitionEngine {
         }
 
         val waitGoEligible = commandOpenSeen && glyphDisplaySeen && readyIndicatorsVisible
-        if (waitGoEligible) {
+        if (waitGoEligible && !waitGoSeen) {
             waitGoSeen = true
+            waitGoEnteredAtNs = SystemClock.elapsedRealtimeNanos()
         }
 
-        val glyphCollectionEligible = commandOpenSeen && (
-            glyphDisplaySeen ||
-                sequence.isNotEmpty() ||
-                glyphDisplayLatched ||
-                waitGoSeen
+        // WAIT_GO 超时检测：超过配置时长未触发绘制则重置回 IDLE
+        val waitGoTimedOut = waitGoSeen && !drawTriggered &&
+            settings.waitGoTimeoutMs > 0L &&
+            waitGoEnteredAtNs > 0L &&
+            elapsedMs(waitGoEnteredAtNs) >= settings.waitGoTimeoutMs
+        if (waitGoTimedOut) {
+            Log.w(
+                LOG_TAG,
+                "[ENGINE][F$frameId] WAIT_GO timed out after ${elapsedMs(waitGoEnteredAtNs)}ms, resetting to IDLE",
             )
-
-        if (!drawTriggered && glyphCollectionEligible && !settings.suppressGlyphTracking) {
-            updateSequence(candidateGlyphName)
-        } else {
-            resetGlyphTrackingOnly()
+            resetForNextRound()
+            // resetForNextRound 已将 phase 设为 IDLE，直接返回快照
+            return GlyphSnapshot(
+                phase = phase,
+                currentGlyph = null,
+                currentConfidence = 0f,
+                sequence = emptyList(),
+                activeEdges = activeEdges,
+                edgeEvidence = edgeEvidence,
+                goMatched = false,
+                drawRequested = false,
+                debugNodes = nodes,
+                debugFrameWidth = bitmap.width,
+                debugFrameHeight = bitmap.height,
+                firstBoxRect = firstBoxRect,
+                firstBoxLuma = firstBoxLuma,
+                firstBoxBaselineLuma = 0f,
+                countdownRect = countdownRect,
+                countdownLuma = countdownLuma,
+                progressRect = progressRect,
+                progressLuma = progressLuma,
+                readyIndicatorsVisible = readyIndicatorsVisible,
+            )
         }
 
-        if (commandOpenSeen && glyphDisplaySeen && activeEdges.isNotEmpty()) {
+        val glyphDisplayLatching = commandOpenSeen && glyphDisplaySeen && activeEdges.isNotEmpty()
+        if (glyphDisplayLatching) {
             glyphDisplayLatched = true
             glyphGapFrames = 0
         } else if (glyphDisplayLatched && !drawTriggered && !waitGoEligible) {
@@ -232,6 +282,7 @@ class GlyphRecognitionEngine {
             glyphGapFrames = 0
         }
 
+        // 先计算 phase，再决定是否收集 glyph
         var drawRequested = false
         phase = when {
             drawTriggered -> GlyphPhase.AUTO_DRAW
@@ -239,6 +290,13 @@ class GlyphRecognitionEngine {
             commandOpenSeen && (glyphDisplaySeen || sequence.isNotEmpty() || glyphDisplayLatched) -> GlyphPhase.GLYPH_DISPLAY
             commandOpenSeen -> GlyphPhase.COMMAND_OPEN
             else -> GlyphPhase.IDLE
+        }
+
+        // 严格限制：只在 GLYPH_DISPLAY 阶段收集 glyph
+        if (!drawTriggered && phase == GlyphPhase.GLYPH_DISPLAY && !settings.suppressGlyphTracking) {
+            updateSequence(candidateGlyphName)
+        } else {
+            resetGlyphTrackingOnly()
         }
 
         if (!drawTriggered) {
@@ -401,6 +459,7 @@ class GlyphRecognitionEngine {
         waitGoSeen = false
         glyphDisplayLatched = false
         glyphGapFrames = 0
+        waitGoEnteredAtNs = 0L
         phase = GlyphPhase.IDLE
         Log.i(
             LOG_TAG,
@@ -462,6 +521,55 @@ class GlyphRecognitionEngine {
         )
     }
 
+    /**
+     * 对 11 个节点的 patch 区域做逐像素 MAE（Mean Absolute Error）匹配。
+     *
+     * 逐节点计算，任一节点 MAE 超过 [maxMae] 即提前返回 [Float.MAX_VALUE]，避免无谓计算。
+     * 使用 [requestedSize] 作为采样边长：如果标定 patch 的原始边长不同，
+     * 则按 min(requestedSize, patch.size) 取中心区域进行比较。
+     */
+    private fun computeNodePatchMae(
+        frame: LumaFrame,
+        calibrationProfile: CalibrationProfile,
+        scaledNodes: List<NodePosition>,
+        requestedSize: Int,
+        maxMae: Float,
+    ): Float {
+        val patches = calibrationProfile.nodePatches
+        if (patches.isEmpty()) return Float.MAX_VALUE
+
+        var totalMae = 0f
+        var matchedCount = 0
+
+        for (patch in patches) {
+            val node = scaledNodes.firstOrNull { it.index == patch.nodeIndex } ?: continue
+            val useSize = minOf(requestedSize, patch.size)
+            val half = useSize / 2
+            val patchOffset = (patch.size - useSize) / 2
+
+            var sumAbsDiff = 0f
+            var pixelCount = 0
+            for (py in 0 until useSize) {
+                for (px in 0 until useSize) {
+                    val frameX = node.x - half + px
+                    val frameY = node.y - half + py
+                    val frameLuma = frame.sample(frameX, frameY)
+                    val patchLuma = patch.luma[(patchOffset + py) * patch.size + (patchOffset + px)]
+                    sumAbsDiff += abs(frameLuma - patchLuma)
+                    pixelCount++
+                }
+            }
+            if (pixelCount > 0) {
+                val nodeMae = sumAbsDiff / pixelCount
+                if (nodeMae > maxMae) return Float.MAX_VALUE
+                totalMae += nodeMae
+                matchedCount++
+            }
+        }
+
+        return if (matchedCount > 0) totalMae / matchedCount else Float.MAX_VALUE
+    }
+
     data class EngineSettings(
         val edgeActivationThreshold: Float,
         val minimumLineBrightness: Float,
@@ -479,6 +587,12 @@ class GlyphRecognitionEngine {
         val progressTopPercent: Float,
         val progressBottomPercent: Float,
         val suppressGlyphTracking: Boolean,
+        /** 节点 patch 匹配时使用的正方形边长（像素）。0 表示禁用 patch 匹配。 */
+        val nodePatchSize: Int,
+        /** 节点 patch MAE 阈值：平均绝对误差低于此值视为匹配。 */
+        val nodePatchMaxMae: Float,
+        /** WAIT_GO 阶段超时时间（毫秒），超时后重置回 IDLE。0 = 不超时。 */
+        val waitGoTimeoutMs: Long,
     )
 
     private data class LumaFrame(

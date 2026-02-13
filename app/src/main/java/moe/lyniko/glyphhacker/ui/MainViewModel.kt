@@ -95,6 +95,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { settingsRepository.updateCommandOpenMaxLuma(value) }
     }
 
+    fun setNodePatchSize(value: Int) {
+        viewModelScope.launch { settingsRepository.updateNodePatchSize(value) }
+    }
+
+    fun setNodePatchMaxMae(value: Float) {
+        viewModelScope.launch { settingsRepository.updateNodePatchMaxMae(value) }
+    }
+
+    fun setWaitGoTimeoutMs(value: Long) {
+        viewModelScope.launch { settingsRepository.updateWaitGoTimeoutMs(value) }
+    }
+
     fun setGlyphDisplayMinLuma(value: Float) {
         viewModelScope.launch { settingsRepository.updateGlyphDisplayMinLuma(value) }
     }
