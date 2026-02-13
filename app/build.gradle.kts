@@ -20,13 +20,29 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        create("release") {
+            val props = project.properties
+            if (props["releaseStoreFile"] != null) {
+                storeFile = rootProject.file(props["releaseStoreFile"] as String)
+                storePassword = props["releaseStorePassword"] as String
+                keyAlias = props["releaseKeyAlias"] as String
+                keyPassword = props["releaseKeyPassword"] as String
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
+                "proguard-rules.pro",
             )
+            val props = project.properties
+            if (props["releaseStoreFile"] != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
     compileOptions {
