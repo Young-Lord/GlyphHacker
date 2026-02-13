@@ -63,12 +63,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun setFrameIntervalMs(value: Long) {
-        viewModelScope.launch { settingsRepository.updateFrameIntervalMs(value) }
+    fun setIdleFrameIntervalMs(value: Long) {
+        viewModelScope.launch { settingsRepository.updateIdleFrameIntervalMs(value) }
     }
 
-    fun setGoCheckIntervalMs(value: Long) {
-        viewModelScope.launch { settingsRepository.updateGoCheckIntervalMs(value) }
+    fun setNonIdleFrameIntervalMs(value: Long) {
+        viewModelScope.launch { settingsRepository.updateNonIdleFrameIntervalMs(value) }
     }
 
     fun setDebugPlaybackSpeed(value: Float) {
@@ -81,10 +81,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setMinimumLineBrightness(value: Float) {
         viewModelScope.launch { settingsRepository.updateMinimumLineBrightness(value) }
-    }
-
-    fun setStableFrameCount(value: Int) {
-        viewModelScope.launch { settingsRepository.updateStableFrameCount(value) }
     }
 
     fun setMinimumMatchScore(value: Float) {
@@ -185,6 +181,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** 导入 command channel open 截图（标定帧）并自动执行节点标定。 */
     fun importBlankAndCalibrate(uri: Uri) {
         viewModelScope.launch {
             settingsRepository.updateBlankReferenceUri(uri.toString())
@@ -200,7 +197,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _message.value = "标定失败：未检测到11个节点"
             } else {
                 settingsRepository.updateCalibrationProfile(calibration)
-                _message.value = "空白截图导入并标定成功"
+                _message.value = "Command Channel截图导入并标定成功"
             }
         }
     }
@@ -238,10 +235,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** 使用已导入的 command channel open 截图重新执行节点标定。 */
     fun runCalibrationFromBlank() {
         val uriString = settings.value.blankReferenceUri
         if (uriString.isNullOrBlank()) {
-            _message.value = "请先选择空白截图"
+            _message.value = "请先导入 command channel open 截图"
             return
         }
 

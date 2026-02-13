@@ -66,6 +66,10 @@ class CaptureForegroundService : Service() {
     private var foregroundUsesAccessibilityType: Boolean = false
     private var recognitionPaused: Boolean = false
     private var useAccessibilityScreenshotMode: Boolean = false
+    @Volatile
+    private var commandPresetDrawInProgress: Boolean = false
+    @Volatile
+    private var suppressGlyphTrackingUntilElapsedMs: Long = 0L
 
     private val projectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
@@ -168,6 +172,8 @@ class CaptureForegroundService : Service() {
                 Log.i(LOG_TAG, "[CAPTURE] received reset-to-idle action")
                 recognitionEngine.resetSession()
                 commandOpenPresetIssued = false
+                commandPresetDrawInProgress = false
+                suppressGlyphTrackingUntilElapsedMs = 0L
                 recognitionPaused = false
                 RuntimeStateBus.setRecognitionEnabled(true)
                 val running = captureJob?.isActive == true && foregroundStarted
@@ -211,7 +217,7 @@ class CaptureForegroundService : Service() {
                 settings = next
                 Log.d(
                     LOG_TAG,
-                    "[CAPTURE] settings frameInterval=${next.frameIntervalMs}ms goCheck=${next.goCheckIntervalMs}ms stable=${next.stableFrameCount} edgeTh=${next.edgeActivationThreshold} minLine=${next.minimumLineBrightness} accessibilityShot=${next.useAccessibilityScreenshotCapture}",
+                    "[CAPTURE] settings idleInterval=${next.idleFrameIntervalMs}ms nonIdleInterval=${next.nonIdleFrameIntervalMs}ms edgeTh=${next.edgeActivationThreshold} minLine=${next.minimumLineBrightness} accessibilityShot=${next.useAccessibilityScreenshotCapture}",
                 )
             }
         }
@@ -221,6 +227,15 @@ class CaptureForegroundService : Service() {
         drawCompletionJob?.cancel()
         drawCompletionJob = serviceScope.launch {
             DrawCommandBus.completions.collectLatest { completion ->
+                if (completion.isCommandOpenPreset) {
+                    commandPresetDrawInProgress = false
+                    suppressGlyphTrackingUntilElapsedMs = SystemClock.elapsedRealtime() + 220L
+                    Log.i(
+                        LOG_TAG,
+                        "[CAPTURE][F${completion.sourceFrameId}] command-open preset completed; suppress tracking briefly",
+                    )
+                    return@collectLatest
+                }
                 if (!completion.doneButtonTapped) {
                     return@collectLatest
                 }
@@ -228,6 +243,7 @@ class CaptureForegroundService : Service() {
                 RuntimeStateBus.setIdle()
                 lastLoggedPhase = GlyphPhase.IDLE
                 commandOpenPresetIssued = false
+                commandPresetDrawInProgress = false
                 Log.i(
                     LOG_TAG,
                     "[CAPTURE][F${completion.sourceFrameId}] done tap confirmed; reset to IDLE immediately",
@@ -322,7 +338,7 @@ class CaptureForegroundService : Service() {
         recognitionPaused = false
         Log.i(
             LOG_TAG,
-            "[CAPTURE] starting capture frameInterval=${settings.frameIntervalMs}ms goCheck=${settings.goCheckIntervalMs}ms",
+            "[CAPTURE] starting capture idleInterval=${settings.idleFrameIntervalMs}ms nonIdleInterval=${settings.nonIdleFrameIntervalMs}ms",
         )
 
         val metrics = resources.displayMetrics
@@ -354,7 +370,7 @@ class CaptureForegroundService : Service() {
         captureJob?.cancel()
         captureJob = serviceScope.launch {
             RuntimeStateBus.setCaptureRunning(true)
-            var nextDelayMs = settings.frameIntervalMs.coerceIn(120L, 1000L)
+            var nextDelayMs = settings.idleFrameIntervalMs.coerceIn(120L, 1500L)
             while (isActive) {
                 val frameId = ++frameCounter
                 val loopStartNs = SystemClock.elapsedRealtimeNanos()
@@ -373,7 +389,7 @@ class CaptureForegroundService : Service() {
                             RuntimeStateBus.setDrawRemainingCount(0)
                             Log.i(LOG_TAG, "[CAPTURE] recognition paused; keep projection alive")
                         }
-                        nextDelayMs = settings.frameIntervalMs.coerceIn(120L, 1000L)
+                        nextDelayMs = settings.idleFrameIntervalMs.coerceIn(120L, 1500L)
                         delay(nextDelayMs)
                         continue
                     }
@@ -395,10 +411,10 @@ class CaptureForegroundService : Service() {
                         frameCapturedAtElapsedMs = frameCapturedAtElapsedMs,
                     )
                     val analysisDurationMs = elapsedMs(analysisStartNs)
-                    nextDelayMs = if (snapshot?.goMatched == true && snapshot.phase == GlyphPhase.WAIT_GO) {
-                        settings.goCheckIntervalMs.coerceIn(30L, 300L)
+                    nextDelayMs = if (snapshot?.phase == GlyphPhase.IDLE) {
+                        settings.idleFrameIntervalMs.coerceIn(120L, 1500L)
                     } else {
-                        settings.frameIntervalMs.coerceIn(120L, 1000L)
+                        settings.nonIdleFrameIntervalMs.coerceIn(30L, 1000L)
                     }
                     val totalDurationMs = elapsedMs(loopStartNs)
                     Log.d(
@@ -442,13 +458,13 @@ class CaptureForegroundService : Service() {
         recognitionPaused = false
         Log.i(
             LOG_TAG,
-            "[CAPTURE] starting accessibility screenshot loop frameInterval=${settings.frameIntervalMs}ms goCheck=${settings.goCheckIntervalMs}ms",
+            "[CAPTURE] starting accessibility screenshot loop idleInterval=${settings.idleFrameIntervalMs}ms nonIdleInterval=${settings.nonIdleFrameIntervalMs}ms",
         )
 
         captureJob?.cancel()
         captureJob = serviceScope.launch {
             RuntimeStateBus.setCaptureRunning(true)
-            var nextDelayMs = settings.frameIntervalMs.coerceIn(120L, 1000L)
+            var nextDelayMs = settings.idleFrameIntervalMs.coerceIn(120L, 1500L)
             while (isActive) {
                 val frameId = ++frameCounter
                 val loopStartNs = SystemClock.elapsedRealtimeNanos()
@@ -461,7 +477,7 @@ class CaptureForegroundService : Service() {
                         RuntimeStateBus.setDrawRemainingCount(0)
                         Log.i(LOG_TAG, "[CAPTURE] recognition paused; keep accessibility screenshot loop alive")
                     }
-                    nextDelayMs = settings.frameIntervalMs.coerceIn(120L, 1000L)
+                    nextDelayMs = settings.idleFrameIntervalMs.coerceIn(120L, 1500L)
                     delay(nextDelayMs)
                     continue
                 }
@@ -490,10 +506,10 @@ class CaptureForegroundService : Service() {
                         frameCapturedAtElapsedMs = frameCapturedAtElapsedMs,
                     )
                     val analysisDurationMs = elapsedMs(analysisStartNs)
-                    nextDelayMs = if (snapshot?.goMatched == true && snapshot.phase == GlyphPhase.WAIT_GO) {
-                        settings.goCheckIntervalMs.coerceIn(30L, 300L)
+                    nextDelayMs = if (snapshot?.phase == GlyphPhase.IDLE) {
+                        settings.idleFrameIntervalMs.coerceIn(120L, 1500L)
                     } else {
-                        settings.frameIntervalMs.coerceIn(120L, 1000L)
+                        settings.nonIdleFrameIntervalMs.coerceIn(30L, 1000L)
                     }
                     val totalDurationMs = elapsedMs(loopStartNs)
                     Log.d(
@@ -545,11 +561,10 @@ class CaptureForegroundService : Service() {
         val snapshot = recognitionEngine.processFrame(
             bitmap = frame,
             calibrationProfile = profile,
-            settings = GlyphRecognitionEngine.EngineSettings(
-                edgeActivationThreshold = settings.edgeActivationThreshold,
-                minimumLineBrightness = settings.minimumLineBrightness,
-                stableFrameCount = settings.stableFrameCount,
-                minimumMatchScore = settings.minimumMatchScore,
+                settings = GlyphRecognitionEngine.EngineSettings(
+                    edgeActivationThreshold = settings.edgeActivationThreshold,
+                    minimumLineBrightness = settings.minimumLineBrightness,
+                    minimumMatchScore = settings.minimumMatchScore,
                 commandOpenMaxLuma = settings.commandOpenMaxLuma,
                 glyphDisplayMinLuma = settings.glyphDisplayMinLuma,
                 glyphDisplayTopBarsMinLuma = settings.glyphDisplayTopBarsMinLuma,
@@ -558,11 +573,13 @@ class CaptureForegroundService : Service() {
                 progressVisibleThreshold = settings.progressVisibleThreshold,
                 firstBoxTopPercent = settings.firstBoxTopPercent,
                 firstBoxBottomPercent = settings.firstBoxBottomPercent,
-                countdownTopPercent = settings.countdownTopPercent,
-                countdownBottomPercent = settings.countdownBottomPercent,
-                progressTopPercent = settings.progressTopPercent,
-                progressBottomPercent = settings.progressBottomPercent,
-            ),
+                    countdownTopPercent = settings.countdownTopPercent,
+                    countdownBottomPercent = settings.countdownBottomPercent,
+                    progressTopPercent = settings.progressTopPercent,
+                    progressBottomPercent = settings.progressBottomPercent,
+                    suppressGlyphTracking = commandPresetDrawInProgress ||
+                        SystemClock.elapsedRealtime() < suppressGlyphTrackingUntilElapsedMs,
+                ),
             readyBoxProfile = settings.readyBoxProfile,
         )
         val processDurationMs = elapsedMs(processStartNs)
@@ -586,6 +603,8 @@ class CaptureForegroundService : Service() {
                         DrawCommand(
                             recognitionMode = settings.recognitionMode,
                             glyphNames = presetGlyphs,
+                            tapDoneButtonAfterDraw = false,
+                            isCommandOpenPreset = true,
                             calibrationProfile = profile,
                             frameWidth = frame.width,
                             frameHeight = frame.height,
@@ -604,6 +623,9 @@ class CaptureForegroundService : Service() {
                         LOG_TAG,
                         "[CAPTURE][F$frameId] command-open preset seq=${formatSequence(presetGlyphs)} emitted=$emitted process=${processDurationMs}ms captureToEmit=${captureToEmitMs}ms",
                     )
+                    if (emitted) {
+                        commandPresetDrawInProgress = true
+                    }
                     if (!emitted) {
                         Log.w(LOG_TAG, "[CAPTURE][F$frameId] command-open preset dropped: DrawCommandBus buffer full")
                     }
@@ -611,6 +633,7 @@ class CaptureForegroundService : Service() {
             }
         } else if (snapshot.phase == GlyphPhase.IDLE) {
             commandOpenPresetIssued = false
+            commandPresetDrawInProgress = false
         }
 
         if (snapshot.drawRequested && snapshot.sequence.isNotEmpty()) {
@@ -619,6 +642,8 @@ class CaptureForegroundService : Service() {
                 DrawCommand(
                     recognitionMode = settings.recognitionMode,
                     glyphNames = snapshot.sequence,
+                    tapDoneButtonAfterDraw = true,
+                    isCommandOpenPreset = false,
                     calibrationProfile = profile,
                     frameWidth = frame.width,
                     frameHeight = frame.height,
@@ -655,6 +680,8 @@ class CaptureForegroundService : Service() {
         stopCaptureLoopOnly()
         recognitionEngine.resetSession()
         commandOpenPresetIssued = false
+        commandPresetDrawInProgress = false
+        suppressGlyphTrackingUntilElapsedMs = 0L
         RuntimeStateBus.reset()
     }
 
@@ -663,6 +690,8 @@ class CaptureForegroundService : Service() {
         stopCaptureResources()
         RuntimeStateBus.reset()
         commandOpenPresetIssued = false
+        commandPresetDrawInProgress = false
+        suppressGlyphTrackingUntilElapsedMs = 0L
         if (foregroundStarted) {
             stopForeground(STOP_FOREGROUND_REMOVE)
             foregroundStarted = false

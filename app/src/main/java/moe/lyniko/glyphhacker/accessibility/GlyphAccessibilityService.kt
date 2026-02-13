@@ -175,10 +175,12 @@ class GlyphAccessibilityService : AccessibilityService() {
 
         var dispatchedStrokeCount = 0
         var failedStrokeCount = 0
+        var allGlyphsDrawn = command.glyphNames.isNotEmpty()
 
         command.glyphNames.forEachIndexed { glyphIndex, glyphName ->
             val definition = GlyphDictionary.findByName(glyphName)
             if (definition == null) {
+                allGlyphsDrawn = false
                 Log.w(
                     LOG_TAG,
                     "[DRAW][F${command.sourceFrameId}] glyph not found in dictionary: $glyphName",
@@ -187,12 +189,16 @@ class GlyphAccessibilityService : AccessibilityService() {
                 return@forEachIndexed
             }
             val segments = GlyphPathPlanner.buildStrokeSegments(definition)
+            if (segments.isEmpty()) {
+                allGlyphsDrawn = false
+            }
             Log.d(
                 LOG_TAG,
                 "[DRAW][F${command.sourceFrameId}] glyph[$glyphIndex]=$glyphName segments=${segments.size}",
             )
             segments.forEachIndexed { segmentIndex, segment ->
                 if (segment.size < 2) {
+                    allGlyphsDrawn = false
                     Log.d(
                         LOG_TAG,
                         "[DRAW][F${command.sourceFrameId}] glyph=$glyphName segment[$segmentIndex] skipped: size=${segment.size}",
@@ -207,6 +213,7 @@ class GlyphAccessibilityService : AccessibilityService() {
                     frameHeight = command.frameHeight,
                 )
                 if (path == null) {
+                    allGlyphsDrawn = false
                     Log.w(
                         LOG_TAG,
                         "[DRAW][F${command.sourceFrameId}] glyph=$glyphName segment[$segmentIndex] missing first node=${segment.first()}",
@@ -226,6 +233,7 @@ class GlyphAccessibilityService : AccessibilityService() {
                     dispatchedStrokeCount += 1
                 } else {
                     failedStrokeCount += 1
+                    allGlyphsDrawn = false
                 }
                 Log.d(
                     LOG_TAG,
@@ -238,11 +246,23 @@ class GlyphAccessibilityService : AccessibilityService() {
             RuntimeStateBus.setDrawRemainingCount((command.glyphNames.size - glyphIndex - 1).coerceAtLeast(0))
         }
 
-        val doneButtonTapped = tapDoneButton(command)
+        val shouldTapDoneButton = command.tapDoneButtonAfterDraw && allGlyphsDrawn && failedStrokeCount == 0 && dispatchedStrokeCount > 0
+        if (command.tapDoneButtonAfterDraw && !shouldTapDoneButton) {
+            Log.w(
+                LOG_TAG,
+                "[DRAW][F${command.sourceFrameId}] done-button tap skipped: allGlyphsDrawn=$allGlyphsDrawn strokes=$dispatchedStrokeCount failed=$failedStrokeCount",
+            )
+        }
+        val doneButtonTapped = if (shouldTapDoneButton) {
+            tapDoneButton(command)
+        } else {
+            false
+        }
         DrawCommandBus.tryEmitCompletion(
             DrawCompletion(
                 sourceFrameId = command.sourceFrameId,
                 doneButtonTapped = doneButtonTapped,
+                isCommandOpenPreset = command.isCommandOpenPreset,
             )
         )
         RuntimeStateBus.setDrawRemainingCount(0)

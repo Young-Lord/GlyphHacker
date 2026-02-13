@@ -16,13 +16,11 @@ class GlyphRecognitionEngine {
         val phase: GlyphPhase,
         val sequence: List<String>,
         val trackedGlyph: String?,
-        val trackedFrames: Int,
-        val trackedCommitted: Boolean,
-        val blankFrames: Int,
         val drawTriggered: Boolean,
         val quietFramesAfterDraw: Int,
         val commandOpenSeen: Boolean,
         val glyphDisplaySeen: Boolean,
+        val waitGoSeen: Boolean,
         val glyphDisplayLatched: Boolean,
         val glyphGapFrames: Int,
     )
@@ -30,13 +28,11 @@ class GlyphRecognitionEngine {
     private var phase: GlyphPhase = GlyphPhase.IDLE
     private val sequence = mutableListOf<String>()
     private var trackedGlyph: String? = null
-    private var trackedFrames: Int = 0
-    private var trackedCommitted: Boolean = false
-    private var blankFrames: Int = 0
     private var drawTriggered: Boolean = false
     private var quietFramesAfterDraw: Int = 0
     private var commandOpenSeen: Boolean = false
     private var glyphDisplaySeen: Boolean = false
+    private var waitGoSeen: Boolean = false
     private var glyphDisplayLatched: Boolean = false
     private var glyphGapFrames: Int = 0
     private var processedFrameCount: Long = 0L
@@ -45,13 +41,11 @@ class GlyphRecognitionEngine {
         phase = GlyphPhase.IDLE
         sequence.clear()
         trackedGlyph = null
-        trackedFrames = 0
-        trackedCommitted = false
-        blankFrames = 0
         drawTriggered = false
         quietFramesAfterDraw = 0
         commandOpenSeen = false
         glyphDisplaySeen = false
+        waitGoSeen = false
         glyphDisplayLatched = false
         glyphGapFrames = 0
         processedFrameCount = 0L
@@ -62,13 +56,11 @@ class GlyphRecognitionEngine {
             phase = phase,
             sequence = sequence.toList(),
             trackedGlyph = trackedGlyph,
-            trackedFrames = trackedFrames,
-            trackedCommitted = trackedCommitted,
-            blankFrames = blankFrames,
             drawTriggered = drawTriggered,
             quietFramesAfterDraw = quietFramesAfterDraw,
             commandOpenSeen = commandOpenSeen,
             glyphDisplaySeen = glyphDisplaySeen,
+            waitGoSeen = waitGoSeen,
             glyphDisplayLatched = glyphDisplayLatched,
             glyphGapFrames = glyphGapFrames,
         )
@@ -79,13 +71,11 @@ class GlyphRecognitionEngine {
         sequence.clear()
         sequence.addAll(state.sequence)
         trackedGlyph = state.trackedGlyph
-        trackedFrames = state.trackedFrames
-        trackedCommitted = state.trackedCommitted
-        blankFrames = state.blankFrames
         drawTriggered = state.drawTriggered
         quietFramesAfterDraw = state.quietFramesAfterDraw
         commandOpenSeen = state.commandOpenSeen
         glyphDisplaySeen = state.glyphDisplaySeen
+        waitGoSeen = state.waitGoSeen
         glyphDisplayLatched = state.glyphDisplayLatched
         glyphGapFrames = state.glyphGapFrames
     }
@@ -179,14 +169,12 @@ class GlyphRecognitionEngine {
         val commandOpenDetected = firstBoxLuma < settings.commandOpenMaxLuma &&
             countdownLuma < settings.commandOpenMaxLuma &&
             progressLuma < settings.commandOpenMaxLuma
-        val glyphDisplayDetected = firstBoxLuma > settings.glyphDisplayMinLuma &&
-            firstBoxLuma > settings.glyphDisplayTopBarsMinLuma &&
-            countdownLuma > settings.glyphDisplayTopBarsMinLuma &&
-            progressLuma > settings.glyphDisplayTopBarsMinLuma
+        val glyphDisplayTransitionFrame = firstBoxLuma > settings.glyphDisplayMinLuma &&
+            activeEdges.isNotEmpty()
         if (commandOpenDetected) {
             commandOpenSeen = true
         }
-        if (commandOpenSeen && glyphDisplayDetected) {
+        if (commandOpenSeen && glyphDisplayTransitionFrame) {
             glyphDisplaySeen = true
         }
         if (!previousCommandOpenSeen && commandOpenSeen) {
@@ -213,14 +201,24 @@ class GlyphRecognitionEngine {
         }
 
         val waitGoEligible = commandOpenSeen && glyphDisplaySeen && readyIndicatorsVisible
+        if (waitGoEligible) {
+            waitGoSeen = true
+        }
 
-        if (!drawTriggered && commandOpenSeen && glyphDisplaySeen) {
-            updateSequence(candidateGlyphName, settings.stableFrameCount)
+        val glyphCollectionEligible = commandOpenSeen && (
+            glyphDisplaySeen ||
+                sequence.isNotEmpty() ||
+                glyphDisplayLatched ||
+                waitGoSeen
+            )
+
+        if (!drawTriggered && glyphCollectionEligible && !settings.suppressGlyphTracking) {
+            updateSequence(candidateGlyphName)
         } else {
             resetGlyphTrackingOnly()
         }
 
-        if (commandOpenSeen && activeEdges.isNotEmpty()) {
+        if (commandOpenSeen && glyphDisplaySeen && activeEdges.isNotEmpty()) {
             glyphDisplayLatched = true
             glyphGapFrames = 0
         } else if (glyphDisplayLatched && !drawTriggered && !waitGoEligible) {
@@ -237,14 +235,14 @@ class GlyphRecognitionEngine {
         var drawRequested = false
         phase = when {
             drawTriggered -> GlyphPhase.AUTO_DRAW
-            waitGoEligible -> GlyphPhase.WAIT_GO
-            commandOpenSeen && (glyphDisplaySeen || activeEdges.isNotEmpty() || sequence.isNotEmpty() || glyphDisplayLatched) -> GlyphPhase.GLYPH_DISPLAY
+            waitGoSeen -> GlyphPhase.WAIT_GO
+            commandOpenSeen && (glyphDisplaySeen || sequence.isNotEmpty() || glyphDisplayLatched) -> GlyphPhase.GLYPH_DISPLAY
             commandOpenSeen -> GlyphPhase.COMMAND_OPEN
             else -> GlyphPhase.IDLE
         }
 
         if (!drawTriggered) {
-            if (waitGoEligible && firstBoxRect != null) {
+            if (waitGoSeen && firstBoxRect != null) {
                 if (firstBoxLuma >= settings.goColorDeltaThreshold) {
                     if (sequence.isNotEmpty()) {
                         drawRequested = true
@@ -259,10 +257,6 @@ class GlyphRecognitionEngine {
                     }
                 } else {
                     phase = GlyphPhase.WAIT_GO
-                }
-            } else {
-                if (phase == GlyphPhase.WAIT_GO && !waitGoEligible) {
-                    phase = GlyphPhase.GLYPH_DISPLAY
                 }
             }
         }
@@ -374,59 +368,25 @@ class GlyphRecognitionEngine {
         return sum / max(1, count)
     }
 
-    private fun updateSequence(candidateGlyphName: String?, stableFrameCount: Int) {
+    private fun updateSequence(candidateGlyphName: String?) {
         if (candidateGlyphName == null) {
-            if (trackedGlyph != null) {
-                Log.d(
-                    LOG_TAG,
-                    "[ENGINE][F$processedFrameCount] glyph tracking reset because candidate is blank",
-                )
-            }
             trackedGlyph = null
-            trackedFrames = 0
-            trackedCommitted = false
-            blankFrames += 1
             return
         }
 
-        if (candidateGlyphName == trackedGlyph) {
-            trackedFrames += 1
-        } else {
-            val previousTrackedGlyph = trackedGlyph
-            trackedGlyph = candidateGlyphName
-            trackedFrames = 1
-            trackedCommitted = false
-            if (previousTrackedGlyph != candidateGlyphName) {
-                Log.d(
-                    LOG_TAG,
-                    "[ENGINE][F$processedFrameCount] tracking glyph switched to $candidateGlyphName",
-                )
-            }
-        }
-
         val lastGlyph = sequence.lastOrNull()
-        val glyphChanged = lastGlyph == null || lastGlyph != candidateGlyphName
-        val stabilityReached = trackedFrames >= stableFrameCount
-        val allowFastCommit = glyphChanged && (blankFrames >= 1 || sequence.isEmpty()) && trackedFrames >= 1
-
-        if (!trackedCommitted && (stabilityReached || allowFastCommit)) {
-            if (glyphChanged) {
-                sequence += candidateGlyphName
-            }
-            trackedCommitted = true
-            blankFrames = 0
+        if (candidateGlyphName != lastGlyph) {
+            sequence += candidateGlyphName
             Log.i(
                 LOG_TAG,
-                "[ENGINE][F$processedFrameCount] glyph committed=$candidateGlyphName trackedFrames=$trackedFrames stability=$stabilityReached fastCommit=$allowFastCommit sequence=${formatSequence(sequence)}",
+                "[ENGINE][F$processedFrameCount] glyph committed=$candidateGlyphName sequence=${formatSequence(sequence)}",
             )
         }
+        trackedGlyph = candidateGlyphName
     }
 
     private fun resetGlyphTrackingOnly() {
         trackedGlyph = null
-        trackedFrames = 0
-        trackedCommitted = false
-        blankFrames = 0
     }
 
     private fun resetForNextRound() {
@@ -434,13 +394,11 @@ class GlyphRecognitionEngine {
         val quietFrames = quietFramesAfterDraw
         sequence.clear()
         trackedGlyph = null
-        trackedFrames = 0
-        trackedCommitted = false
-        blankFrames = 0
         drawTriggered = false
         quietFramesAfterDraw = 0
         commandOpenSeen = false
         glyphDisplaySeen = false
+        waitGoSeen = false
         glyphDisplayLatched = false
         glyphGapFrames = 0
         phase = GlyphPhase.IDLE
@@ -507,7 +465,6 @@ class GlyphRecognitionEngine {
     data class EngineSettings(
         val edgeActivationThreshold: Float,
         val minimumLineBrightness: Float,
-        val stableFrameCount: Int,
         val minimumMatchScore: Float,
         val commandOpenMaxLuma: Float,
         val glyphDisplayMinLuma: Float,
@@ -521,6 +478,7 @@ class GlyphRecognitionEngine {
         val countdownBottomPercent: Float,
         val progressTopPercent: Float,
         val progressBottomPercent: Float,
+        val suppressGlyphTracking: Boolean,
     )
 
     private data class LumaFrame(

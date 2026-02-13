@@ -210,7 +210,6 @@ class VideoDebugAnalyzer(
         return GlyphRecognitionEngine.EngineSettings(
             edgeActivationThreshold = edgeActivationThreshold,
             minimumLineBrightness = minimumLineBrightness,
-            stableFrameCount = stableFrameCount,
             minimumMatchScore = minimumMatchScore,
             commandOpenMaxLuma = commandOpenMaxLuma,
             glyphDisplayMinLuma = glyphDisplayMinLuma,
@@ -224,6 +223,7 @@ class VideoDebugAnalyzer(
             countdownBottomPercent = countdownBottomPercent,
             progressTopPercent = progressTopPercent,
             progressBottomPercent = progressBottomPercent,
+            suppressGlyphTracking = false,
         )
     }
 

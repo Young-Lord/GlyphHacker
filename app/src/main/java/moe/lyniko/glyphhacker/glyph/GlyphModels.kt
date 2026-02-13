@@ -9,6 +9,12 @@ data class NodePosition(
     val y: Float,
 )
 
+/**
+ * 从 command channel open 截图（标定帧）中提取的节点布局信息。
+ *
+ * 标定帧即 Ingress 长按 HACK 后 command channel 刚打开时的画面：纯黑背景 + 11 个高亮节点。
+ * [sourceWidth]/[sourceHeight] 对应该截图的原始分辨率，[nodes] 中的坐标均基于该分辨率。
+ */
 data class CalibrationProfile(
     val sourceWidth: Int,
     val sourceHeight: Int,

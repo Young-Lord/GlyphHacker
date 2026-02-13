@@ -8,6 +8,13 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sqrt
 
+/**
+ * 从 command channel open 截图（即"空白帧"）中检测 11 个 glyph 节点位置，生成 [CalibrationProfile]。
+ *
+ * "标定帧"就是 Ingress 中长按 HACK 后 command channel 刚打开时的截图——此时屏幕背景为纯黑，
+ * 11 个 glyph 节点以高亮圆点形式显示，尚未开始绘制任何 glyph。
+ * 这也是状态机中 [GlyphPhase.COMMAND_OPEN] 阶段对应的画面。
+ */
 object GlyphCalibration {
 
     private data class Blob(
@@ -22,6 +29,12 @@ object GlyphCalibration {
         val meanLuma: Float,
     )
 
+    /**
+     * 从 command channel open 帧中提取 11 个节点的位置。
+     *
+     * @param bitmap command channel open 时的屏幕截图（纯黑背景 + 11 个高亮节点）。
+     * @return 标定结果，包含节点坐标和 ROI；若未能检测到恰好 11 个节点则返回 null。
+     */
     fun calibrateFromBlankFrame(bitmap: Bitmap): CalibrationProfile? {
         val width = bitmap.width
         val height = bitmap.height

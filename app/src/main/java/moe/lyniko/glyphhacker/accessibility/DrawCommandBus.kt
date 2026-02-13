@@ -9,6 +9,8 @@ import moe.lyniko.glyphhacker.glyph.CalibrationProfile
 data class DrawCommand(
     val recognitionMode: RecognitionMode,
     val glyphNames: List<String>,
+    val tapDoneButtonAfterDraw: Boolean,
+    val isCommandOpenPreset: Boolean,
     val calibrationProfile: CalibrationProfile,
     val frameWidth: Int,
     val frameHeight: Int,
@@ -25,6 +27,7 @@ data class DrawCommand(
 data class DrawCompletion(
     val sourceFrameId: Long,
     val doneButtonTapped: Boolean,
+    val isCommandOpenPreset: Boolean,
     val completedAtElapsedMs: Long = SystemClock.elapsedRealtime(),
 )
 

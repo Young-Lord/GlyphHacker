@@ -201,6 +201,10 @@ Key dependencies (see `app/build.gradle.kts` for versions):
 - Kotlin Coroutines for async operations
 - No external image processing libraries (uses Android Bitmap APIs)
 
+## Key Concepts
+
+- **标定帧 / "空白帧" / Blank Frame** = Ingress 中长按 HACK 后 command channel 刚打开时的截图。此时屏幕背景为纯黑，11 个 glyph 节点以高亮圆点显示，尚未开始绘制 glyph。这对应状态机中的 `COMMAND_OPEN` 阶段。`GlyphCalibration.calibrateFromBlankFrame()` 的输入就是这张截图，`CalibrationProfile` 中的坐标也基于该截图的分辨率。
+
 ## Notes for Agents
 
 1. Always run the build command after making changes to verify compilation

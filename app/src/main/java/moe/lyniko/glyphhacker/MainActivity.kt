@@ -206,7 +206,7 @@ class MainActivity : ComponentActivity() {
                     uri ?: return@rememberLauncherForActivityResult
                     context.contentResolver.takePersistableReadPermission(uri)
                     if (!uriExists(context.contentResolver, uri)) {
-                        context.toast("空白截图不存在或不可访问")
+                        context.toast("Command Channel截图不存在或不可访问")
                         return@rememberLauncherForActivityResult
                     }
                     viewModel.importBlankAndCalibrate(uri)
@@ -411,7 +411,7 @@ class MainActivity : ComponentActivity() {
                 }
 
                 fun frameStepMs(activeSettings: AppSettings = latestSettings): Long {
-                    return activeSettings.frameIntervalMs.coerceIn(120L, 1000L)
+                    return activeSettings.nonIdleFrameIntervalMs.coerceIn(30L, 1000L)
                 }
 
                 suspend fun loadDebugTemplateBitmap(): Bitmap? {
@@ -622,11 +622,10 @@ class MainActivity : ComponentActivity() {
                                     onSetRecognitionMode = viewModel::setRecognitionMode,
                                     onSetUseAccessibilityScreenshotCapture = viewModel::setUseAccessibilityScreenshotCapture,
                                     onSetAutoGrantAccessibilityViaShizukuOnLaunch = viewModel::setAutoGrantAccessibilityViaShizukuOnLaunch,
-                                    onSetFrameInterval = viewModel::setFrameIntervalMs,
-                                    onSetGoCheckInterval = viewModel::setGoCheckIntervalMs,
+                                    onSetIdleFrameInterval = viewModel::setIdleFrameIntervalMs,
+                                    onSetNonIdleFrameInterval = viewModel::setNonIdleFrameIntervalMs,
                                     onSetEdgeThreshold = viewModel::setEdgeActivationThreshold,
                                     onSetMinLineBrightness = viewModel::setMinimumLineBrightness,
-                                    onSetStableFrameCount = viewModel::setStableFrameCount,
                                     onSetMinMatchScore = viewModel::setMinimumMatchScore,
                                     onSetTemplateThreshold = viewModel::setStartTemplateThreshold,
                                     onSetCommandOpenMaxLuma = viewModel::setCommandOpenMaxLuma,
@@ -996,11 +995,10 @@ private fun SettingsPage(
     onSetRecognitionMode: (RecognitionMode) -> Unit,
     onSetUseAccessibilityScreenshotCapture: (Boolean) -> Unit,
     onSetAutoGrantAccessibilityViaShizukuOnLaunch: (Boolean) -> Unit,
-    onSetFrameInterval: (Long) -> Unit,
-    onSetGoCheckInterval: (Long) -> Unit,
+    onSetIdleFrameInterval: (Long) -> Unit,
+    onSetNonIdleFrameInterval: (Long) -> Unit,
     onSetEdgeThreshold: (Float) -> Unit,
     onSetMinLineBrightness: (Float) -> Unit,
-    onSetStableFrameCount: (Int) -> Unit,
     onSetMinMatchScore: (Float) -> Unit,
     onSetTemplateThreshold: (Float) -> Unit,
     onSetCommandOpenMaxLuma: (Float) -> Unit,
@@ -1074,98 +1072,89 @@ private fun SettingsPage(
                 )
 
                 SettingSlider(
-                    label = "识别采样间隔 ${settings.frameIntervalMs}ms",
-                    value = settings.frameIntervalMs.toFloat(),
+                    label = "闲0采样间隔 ${settings.idleFrameIntervalMs}ms",
+                    value = settings.idleFrameIntervalMs.toFloat(),
                     valueRange = 120f..1000f,
-                    description = "每隔多久分析一帧，越小越快但耗电更高。",
+                    description = "仅在闲0（IDLE）阶段使用，默认500ms。",
                 ) {
-                    onSetFrameInterval(it.toLong())
+                    onSetIdleFrameInterval(it.toLong())
                 }
                 SettingSlider(
-                    label = "Get Ready后检测间隔 ${settings.goCheckIntervalMs}ms",
-                    value = settings.goCheckIntervalMs.toFloat(),
-                    valueRange = 30f..300f,
-                    description = "进入等待阶段后使用的采样间隔。",
+                    label = "非闲0采样间隔 ${settings.nonIdleFrameIntervalMs}ms",
+                    value = settings.nonIdleFrameIntervalMs.toFloat(),
+                    valueRange = 30f..1000f,
+                    description = "在令/识/备/绘阶段统一使用，默认120ms。",
                 ) {
-                    onSetGoCheckInterval(it.toLong())
+                    onSetNonIdleFrameInterval(it.toLong())
                 }
                 SettingSlider(
-                    label = "连线判定阈值 ${settings.edgeActivationThreshold.format2()}",
+                    label = "边激活分差阈值 ${settings.edgeActivationThreshold.format2()}",
                     value = settings.edgeActivationThreshold,
                     valueRange = 5f..80f,
-                    description = "两侧背景与线段中心亮度差达到该值，才算该边被点亮。",
+                    description = "用于 activeEdges 判定；会影响 COMMAND_OPEN -> GLYPH_DISPLAY（同帧需有 activeEdges）和后续 glyph 识别。",
                     onChange = onSetEdgeThreshold,
                 )
                 SettingSlider(
                     label = "连线最小亮度 ${settings.minimumLineBrightness.format2()}",
                     value = settings.minimumLineBrightness,
                     valueRange = 20f..220f,
-                    description = "线段平均亮度低于该值时不参与识别。",
+                    description = "用于 activeEdges 判定；会影响 COMMAND_OPEN -> GLYPH_DISPLAY（同帧需有 activeEdges）和后续 glyph 识别。",
                     onChange = onSetMinLineBrightness,
                 )
-                SettingSlider(
-                    label = "连续命中帧数 ${settings.stableFrameCount}",
-                    value = settings.stableFrameCount.toFloat(),
-                    valueRange = 1f..6f,
-                    steps = 4,
-                    description = "同一 glyph 连续命中多少帧后写入序列。",
-                ) {
-                    onSetStableFrameCount(it.toInt().coerceAtLeast(1))
-                }
                 SettingSlider(
                     label = "glyph最小匹配分 ${settings.minimumMatchScore.format2()}",
                     value = settings.minimumMatchScore,
                     valueRange = 0.4f..0.95f,
-                    description = "边集合与字典的匹配分低于该值时忽略。",
+                    description = "仅用于 glyph 名称识别，不直接参与阶段状态转移。",
                     onChange = onSetMinMatchScore,
                 )
                 SettingSlider(
                     label = "Get Ready图像匹配阈值 ${settings.startTemplateThreshold.format2()}",
                     value = settings.startTemplateThreshold,
                     valueRange = 0.5f..0.98f,
-                    description = "屏幕与Get Ready参考图的匹配分达到该值才算命中。",
+                    description = "仅用于模板调试匹配，不参与 COMMAND_OPEN/GLYPH_DISPLAY/WAIT_GO/AUTO_DRAW 状态转移。",
                     onChange = onSetTemplateThreshold,
                 )
                 SettingSlider(
                     label = "COMMAND_OPEN亮度上限 ${settings.commandOpenMaxLuma.format2()}",
                     value = settings.commandOpenMaxLuma,
                     valueRange = 0f..20f,
-                    description = "首框/倒计时/进度条亮度都低于该值时，判定为 COMMAND_OPEN。",
+                    description = "用于 IDLE -> COMMAND_OPEN：首框/倒计时/进度条同帧都低于该值才进入 COMMAND_OPEN。",
                     onChange = onSetCommandOpenMaxLuma,
                 )
                 SettingSlider(
                     label = "进入GLYPH_DISPLAY首框亮度 ${settings.glyphDisplayMinLuma.format2()}",
                     value = settings.glyphDisplayMinLuma,
                     valueRange = 0f..40f,
-                    description = "首框亮度高于该值后，判定进入 GLYPH_DISPLAY。",
+                    description = "用于 COMMAND_OPEN -> GLYPH_DISPLAY：同一帧内首框亮度 > 该值，且必须有 activeEdges。",
                     onChange = onSetGlyphDisplayMinLuma,
                 )
                 SettingSlider(
                     label = "进入GLYPH_DISPLAY三栏最低亮度 ${settings.glyphDisplayTopBarsMinLuma.format2()}",
                     value = settings.glyphDisplayTopBarsMinLuma,
                     valueRange = 0f..20f,
-                    description = "COMMAND_OPEN -> GLYPH_DISPLAY 需首框/倒计时/进度条都高于该值。默认1。",
+                    description = "当前不参与阶段状态转移（保留调参位）。",
                     onChange = onSetGlyphDisplayTopBarsMinLuma,
                 )
                 SettingSlider(
                     label = "首框亮起阈值 ${settings.goColorDeltaThreshold.format2()}",
                     value = settings.goColorDeltaThreshold,
                     valueRange = 1f..60f,
-                    description = "首框平均亮度达到该值即触发自动绘制。默认18。",
+                    description = "用于 WAIT_GO -> AUTO_DRAW：在 WAIT_GO 阶段首框亮度达到该值且序列非空时触发自动绘制。",
                     onChange = onSetGoColorDelta,
                 )
                 SettingSlider(
                     label = "倒计时出现阈值 ${settings.countdownVisibleThreshold.format2()}",
                     value = settings.countdownVisibleThreshold,
                     valueRange = 1f..30f,
-                    description = "倒计时检测带平均亮度高于此值，视为倒计时存在。默认5。",
+                    description = "用于 GLYPH_DISPLAY -> WAIT_GO：倒计时检测带亮度 >= 该值且进度条也达标，才进入 WAIT_GO。",
                     onChange = onSetCountdownVisibleThreshold,
                 )
                 SettingSlider(
                     label = "进度条出现阈值 ${settings.progressVisibleThreshold.format2()}",
                     value = settings.progressVisibleThreshold,
                     valueRange = 1f..60f,
-                    description = "进度条检测带平均亮度高于此值，视为进度条存在。默认20。",
+                    description = "用于 GLYPH_DISPLAY -> WAIT_GO：进度条检测带亮度 >= 该值且倒计时也达标，才进入 WAIT_GO。",
                     onChange = onSetProgressVisibleThreshold,
                 )
                 SettingSlider(
@@ -1269,7 +1258,7 @@ private fun SettingsPage(
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = onPickBlank, enabled = !calibrating) {
-                        Text(if (calibrating) "标定中..." else "导入空白截图(自动标定)")
+                        Text(if (calibrating) "标定中..." else "导入Command Channel截图(自动标定)")
                     }
                 }
 
@@ -1300,7 +1289,7 @@ private fun SettingsPage(
 
                 if (previewExpanded) {
                     nodePreviewBitmap?.let { bitmap ->
-                        Text("标定图预览", color = Color(0xFFCAEFCF), fontSize = 12.sp)
+                        Text("Command Channel标定预览", color = Color(0xFFCAEFCF), fontSize = 12.sp)
                         PreviewImageFitWidth(
                             bitmap = bitmap,
                             highlightPointNorm = androidx.compose.ui.geometry.Offset(

@@ -1,6 +1,7 @@
 package moe.lyniko.glyphhacker.data
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.os.Build
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -15,8 +16,15 @@ import java.time.Instant
 class SettingsRepository(context: Context) {
 
     private val prefs = context.getSharedPreferences(FILE_NAME, Context.MODE_PRIVATE)
+    private val preferenceChangeListener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+        refresh()
+    }
     private val _settingsFlow = MutableStateFlow(loadFromPrefs())
     val settingsFlow: StateFlow<AppSettings> = _settingsFlow.asStateFlow()
+
+    init {
+        prefs.registerOnSharedPreferenceChangeListener(preferenceChangeListener)
+    }
 
     suspend fun updateRecognitionMode(mode: RecognitionMode) {
         prefs.edit().putString(KEY_RECOGNITION_MODE, mode.name).apply()
@@ -34,13 +42,13 @@ class SettingsRepository(context: Context) {
         refresh()
     }
 
-    suspend fun updateFrameIntervalMs(value: Long) {
-        prefs.edit().putLong(KEY_FRAME_INTERVAL_MS, value.coerceIn(120L, 1000L)).apply()
+    suspend fun updateIdleFrameIntervalMs(value: Long) {
+        prefs.edit().putLong(KEY_IDLE_FRAME_INTERVAL_MS, value.coerceIn(120L, 1500L)).apply()
         refresh()
     }
 
-    suspend fun updateGoCheckIntervalMs(value: Long) {
-        prefs.edit().putLong(KEY_GO_CHECK_INTERVAL_MS, value.coerceIn(30L, 300L)).apply()
+    suspend fun updateNonIdleFrameIntervalMs(value: Long) {
+        prefs.edit().putLong(KEY_NON_IDLE_FRAME_INTERVAL_MS, value.coerceIn(30L, 1000L)).apply()
         refresh()
     }
 
@@ -56,11 +64,6 @@ class SettingsRepository(context: Context) {
 
     suspend fun updateMinimumLineBrightness(value: Float) {
         prefs.edit().putFloat(KEY_MIN_LINE_BRIGHTNESS, value.coerceIn(5f, 255f)).apply()
-        refresh()
-    }
-
-    suspend fun updateStableFrameCount(value: Int) {
-        prefs.edit().putInt(KEY_STABLE_FRAME_COUNT, value.coerceIn(1, 8)).apply()
         refresh()
     }
 
@@ -276,12 +279,17 @@ class SettingsRepository(context: Context) {
                 "autoGrantAccessibilityViaShizukuOnLaunch",
                 false,
             )
-            val frameInterval = config.optLong("frameIntervalMs", 300L)
-            val goInterval = config.optLong("goCheckIntervalMs", 90L)
+            val idleFrameInterval = config.optLong(
+                "idleFrameIntervalMs",
+                config.optLong("frameIntervalMs", 500L),
+            )
+            val nonIdleFrameInterval = config.optLong(
+                "nonIdleFrameIntervalMs",
+                config.optLong("goCheckIntervalMs", config.optLong("frameIntervalMs", 120L)),
+            )
             val debugPlaybackSpeed = config.optDouble("debugPlaybackSpeed", 1.0).toFloat()
             val edgeThreshold = config.optDouble("edgeActivationThreshold", 26.0).toFloat()
             val minLineBrightness = config.optDouble("minimumLineBrightness", 70.0).toFloat()
-            val stableFrameCount = config.optInt("stableFrameCount", 1)
             val minMatchScore = config.optDouble("minimumMatchScore", 0.68).toFloat()
             val templateThreshold = config.optDouble("startTemplateThreshold", 0.84).toFloat()
             val commandOpenMaxLuma = config.optDouble("commandOpenMaxLuma", 1.0).toFloat()
@@ -358,12 +366,11 @@ class SettingsRepository(context: Context) {
                     KEY_AUTO_GRANT_ACCESSIBILITY_VIA_SHIZUKU_ON_LAUNCH,
                     autoGrantAccessibilityViaShizukuOnLaunch,
                 )
-                .putLong(KEY_FRAME_INTERVAL_MS, frameInterval.coerceIn(120L, 1000L))
-                .putLong(KEY_GO_CHECK_INTERVAL_MS, goInterval.coerceIn(30L, 300L))
+                .putLong(KEY_IDLE_FRAME_INTERVAL_MS, idleFrameInterval.coerceIn(120L, 1500L))
+                .putLong(KEY_NON_IDLE_FRAME_INTERVAL_MS, nonIdleFrameInterval.coerceIn(30L, 1000L))
                 .putFloat(KEY_DEBUG_PLAYBACK_SPEED, debugPlaybackSpeed.coerceIn(0.25f, 4.0f))
                 .putFloat(KEY_EDGE_THRESHOLD, edgeThreshold.coerceIn(5f, 120f))
                 .putFloat(KEY_MIN_LINE_BRIGHTNESS, minLineBrightness.coerceIn(5f, 255f))
-                .putInt(KEY_STABLE_FRAME_COUNT, stableFrameCount.coerceIn(1, 8))
                 .putFloat(KEY_MIN_MATCH_SCORE, minMatchScore.coerceIn(0.3f, 0.99f))
                 .putFloat(KEY_TEMPLATE_THRESHOLD, templateThreshold.coerceIn(0.5f, 0.99f))
                 .putFloat(KEY_COMMAND_OPEN_MAX_LUMA, commandOpenMaxLuma.coerceIn(0f, 30f))
@@ -425,12 +432,17 @@ class SettingsRepository(context: Context) {
                 KEY_AUTO_GRANT_ACCESSIBILITY_VIA_SHIZUKU_ON_LAUNCH,
                 false,
             ),
-            frameIntervalMs = prefs.getLong(KEY_FRAME_INTERVAL_MS, 300L),
-            goCheckIntervalMs = prefs.getLong(KEY_GO_CHECK_INTERVAL_MS, 90L),
+            idleFrameIntervalMs = prefs.getLong(
+                KEY_IDLE_FRAME_INTERVAL_MS,
+                prefs.getLong(KEY_FRAME_INTERVAL_MS, 500L),
+            ).coerceIn(120L, 1500L),
+            nonIdleFrameIntervalMs = prefs.getLong(
+                KEY_NON_IDLE_FRAME_INTERVAL_MS,
+                prefs.getLong(KEY_GO_CHECK_INTERVAL_MS, prefs.getLong(KEY_FRAME_INTERVAL_MS, 120L)),
+            ).coerceIn(30L, 1000L),
             debugPlaybackSpeed = prefs.getFloat(KEY_DEBUG_PLAYBACK_SPEED, 1.0f),
             edgeActivationThreshold = prefs.getFloat(KEY_EDGE_THRESHOLD, 26f),
             minimumLineBrightness = prefs.getFloat(KEY_MIN_LINE_BRIGHTNESS, 70f),
-            stableFrameCount = prefs.getInt(KEY_STABLE_FRAME_COUNT, 1),
             minimumMatchScore = prefs.getFloat(KEY_MIN_MATCH_SCORE, 0.68f),
             startTemplateThreshold = prefs.getFloat(KEY_TEMPLATE_THRESHOLD, 0.84f),
             commandOpenMaxLuma = prefs.getFloat(KEY_COMMAND_OPEN_MAX_LUMA, 1f),
@@ -469,12 +481,13 @@ class SettingsRepository(context: Context) {
         const val KEY_RECOGNITION_MODE = "recognition_mode"
         const val KEY_USE_ACCESSIBILITY_SCREENSHOT_CAPTURE = "use_accessibility_screenshot_capture"
         const val KEY_AUTO_GRANT_ACCESSIBILITY_VIA_SHIZUKU_ON_LAUNCH = "auto_grant_accessibility_via_shizuku_on_launch"
+        const val KEY_IDLE_FRAME_INTERVAL_MS = "idle_frame_interval_ms"
+        const val KEY_NON_IDLE_FRAME_INTERVAL_MS = "non_idle_frame_interval_ms"
         const val KEY_FRAME_INTERVAL_MS = "frame_interval_ms"
         const val KEY_GO_CHECK_INTERVAL_MS = "go_check_interval_ms"
         const val KEY_DEBUG_PLAYBACK_SPEED = "debug_playback_speed"
         const val KEY_EDGE_THRESHOLD = "edge_activation_threshold"
         const val KEY_MIN_LINE_BRIGHTNESS = "minimum_line_brightness"
-        const val KEY_STABLE_FRAME_COUNT = "stable_frame_count"
         const val KEY_MIN_MATCH_SCORE = "minimum_match_score"
         const val KEY_TEMPLATE_THRESHOLD = "start_template_threshold"
         const val KEY_COMMAND_OPEN_MAX_LUMA = "command_open_max_luma"
@@ -640,12 +653,13 @@ private fun AppSettings.toJson(): JSONObject {
     json.put("recognitionMode", recognitionMode.name)
     json.put("useAccessibilityScreenshotCapture", useAccessibilityScreenshotCapture)
     json.put("autoGrantAccessibilityViaShizukuOnLaunch", autoGrantAccessibilityViaShizukuOnLaunch)
-    json.put("frameIntervalMs", frameIntervalMs)
-    json.put("goCheckIntervalMs", goCheckIntervalMs)
+    json.put("idleFrameIntervalMs", idleFrameIntervalMs)
+    json.put("nonIdleFrameIntervalMs", nonIdleFrameIntervalMs)
+    json.put("frameIntervalMs", idleFrameIntervalMs)
+    json.put("goCheckIntervalMs", nonIdleFrameIntervalMs)
     json.put("debugPlaybackSpeed", debugPlaybackSpeed.toDouble())
     json.put("edgeActivationThreshold", edgeActivationThreshold.toDouble())
     json.put("minimumLineBrightness", minimumLineBrightness.toDouble())
-    json.put("stableFrameCount", stableFrameCount)
     json.put("minimumMatchScore", minimumMatchScore.toDouble())
     json.put("startTemplateThreshold", startTemplateThreshold.toDouble())
     json.put("commandOpenMaxLuma", commandOpenMaxLuma.toDouble())
