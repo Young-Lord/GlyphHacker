@@ -370,7 +370,7 @@ class CaptureForegroundService : Service() {
         captureJob?.cancel()
         captureJob = serviceScope.launch {
             RuntimeStateBus.setCaptureRunning(true)
-            var nextDelayMs = settings.idleFrameIntervalMs.coerceIn(120L, 1500L)
+            var nextDelayMs = settings.idleFrameIntervalMs.coerceIn(120L, 5000L)
             while (isActive) {
                 val frameId = ++frameCounter
                 val loopStartNs = SystemClock.elapsedRealtimeNanos()
@@ -389,7 +389,7 @@ class CaptureForegroundService : Service() {
                             RuntimeStateBus.setDrawRemainingCount(0)
                             Log.i(LOG_TAG, "[CAPTURE] recognition paused; keep projection alive")
                         }
-                        nextDelayMs = settings.idleFrameIntervalMs.coerceIn(120L, 1500L)
+                        nextDelayMs = settings.idleFrameIntervalMs.coerceIn(120L, 5000L)
                         delay(nextDelayMs)
                         continue
                     }
@@ -412,7 +412,7 @@ class CaptureForegroundService : Service() {
                     )
                     val analysisDurationMs = elapsedMs(analysisStartNs)
                     nextDelayMs = if (snapshot?.phase == GlyphPhase.IDLE) {
-                        settings.idleFrameIntervalMs.coerceIn(120L, 1500L)
+                        settings.idleFrameIntervalMs.coerceIn(120L, 5000L)
                     } else {
                         settings.nonIdleFrameIntervalMs.coerceIn(30L, 1000L)
                     }
@@ -464,7 +464,7 @@ class CaptureForegroundService : Service() {
         captureJob?.cancel()
         captureJob = serviceScope.launch {
             RuntimeStateBus.setCaptureRunning(true)
-            var nextDelayMs = settings.idleFrameIntervalMs.coerceIn(120L, 1500L)
+            var nextDelayMs = settings.idleFrameIntervalMs.coerceIn(120L, 5000L)
             while (isActive) {
                 val frameId = ++frameCounter
                 val loopStartNs = SystemClock.elapsedRealtimeNanos()
@@ -477,7 +477,7 @@ class CaptureForegroundService : Service() {
                         RuntimeStateBus.setDrawRemainingCount(0)
                         Log.i(LOG_TAG, "[CAPTURE] recognition paused; keep accessibility screenshot loop alive")
                     }
-                    nextDelayMs = settings.idleFrameIntervalMs.coerceIn(120L, 1500L)
+                    nextDelayMs = settings.idleFrameIntervalMs.coerceIn(120L, 5000L)
                     delay(nextDelayMs)
                     continue
                 }
@@ -507,7 +507,7 @@ class CaptureForegroundService : Service() {
                     )
                     val analysisDurationMs = elapsedMs(analysisStartNs)
                     nextDelayMs = if (snapshot?.phase == GlyphPhase.IDLE) {
-                        settings.idleFrameIntervalMs.coerceIn(120L, 1500L)
+                        settings.idleFrameIntervalMs.coerceIn(120L, 5000L)
                     } else {
                         settings.nonIdleFrameIntervalMs.coerceIn(30L, 1000L)
                     }

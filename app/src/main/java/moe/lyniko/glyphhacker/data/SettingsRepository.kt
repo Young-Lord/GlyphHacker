@@ -47,7 +47,7 @@ class SettingsRepository(context: Context) {
     }
 
     suspend fun updateIdleFrameIntervalMs(value: Long) {
-        prefs.edit().putLong(KEY_IDLE_FRAME_INTERVAL_MS, value.coerceIn(120L, 1500L)).apply()
+        prefs.edit().putLong(KEY_IDLE_FRAME_INTERVAL_MS, value.coerceIn(120L, 5000L)).apply()
         refresh()
     }
 
@@ -418,7 +418,7 @@ class SettingsRepository(context: Context) {
                     KEY_AUTO_GRANT_ACCESSIBILITY_VIA_SHIZUKU_ON_LAUNCH,
                     autoGrantAccessibilityViaShizukuOnLaunch,
                 )
-                .putLong(KEY_IDLE_FRAME_INTERVAL_MS, idleFrameInterval.coerceIn(120L, 1500L))
+                .putLong(KEY_IDLE_FRAME_INTERVAL_MS, idleFrameInterval.coerceIn(120L, 5000L))
                 .putLong(KEY_NON_IDLE_FRAME_INTERVAL_MS, nonIdleFrameInterval.coerceIn(30L, 1000L))
                 .putFloat(KEY_DEBUG_PLAYBACK_SPEED, debugPlaybackSpeed.coerceIn(0.25f, 4.0f))
                 .putFloat(KEY_EDGE_THRESHOLD, edgeThreshold.coerceIn(5f, 120f))
@@ -495,7 +495,7 @@ class SettingsRepository(context: Context) {
             idleFrameIntervalMs = prefs.getLong(
                 KEY_IDLE_FRAME_INTERVAL_MS,
                 prefs.getLong(KEY_FRAME_INTERVAL_MS, 500L),
-            ).coerceIn(120L, 1500L),
+            ).coerceIn(120L, 5000L),
             nonIdleFrameIntervalMs = prefs.getLong(
                 KEY_NON_IDLE_FRAME_INTERVAL_MS,
                 prefs.getLong(KEY_GO_CHECK_INTERVAL_MS, prefs.getLong(KEY_FRAME_INTERVAL_MS, 120L)),

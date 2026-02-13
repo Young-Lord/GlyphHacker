@@ -1054,13 +1054,13 @@ private fun SettingsPage(
                     SettingSwitch(
                         label = "辅助功能截屏读屏",
                         checked = settings.useAccessibilityScreenshotCapture,
-                        description = "API 30+ 可用。开启后改为辅助功能截图采样，不再使用录屏。",
+                        description = "安卓 11+ 可用。开启后改为辅助功能截图采样，不再使用录屏。可能有更严格的采样间隔限制。",
                         onCheckedChange = onSetUseAccessibilityScreenshotCapture,
                     )
                 }
 
                 SettingSwitch(
-                    label = "启动时自动用 Shizuku 开无障碍",
+                    label = "启动时自动用 Shizuku 开启无障碍",
                     checked = settings.autoGrantAccessibilityViaShizukuOnLaunch,
                     description = "应用打开时自动调用 Shizuku 获取 WRITE_SECURE_SETTINGS 并尝试开启本应用无障碍。",
                     onCheckedChange = onSetAutoGrantAccessibilityViaShizukuOnLaunch,
@@ -1076,7 +1076,7 @@ private fun SettingsPage(
                 SettingSlider(
                     label = "闲0采样间隔 ${settings.idleFrameIntervalMs}ms",
                     value = settings.idleFrameIntervalMs.toFloat(),
-                    valueRange = 120f..1000f,
+                    valueRange = 120f..5000f,
                     snapStep = 1f,
                     description = "仅在闲0（IDLE）阶段使用，默认500ms。",
                 ) {
