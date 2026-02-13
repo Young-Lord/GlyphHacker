@@ -67,7 +67,7 @@ data class AppSettings(
     val commandOpenMaxLuma: Float = 1f,
     val glyphDisplayMinLuma: Float = 10f,
     val glyphDisplayTopBarsMinLuma: Float = 1f,
-    val goColorDeltaThreshold: Float = 18f,
+    val goColorDeltaThreshold: Float = 3f,
     val countdownVisibleThreshold: Float = 5f,
     val progressVisibleThreshold: Float = 20f,
     val firstBoxTopPercent: Float = 9.0f,
@@ -96,4 +96,14 @@ data class AppSettings(
     val nodePatchMaxMae: Float = 12f,
     /** WAIT_GO 超时时间（毫秒），超时后重置回 IDLE。0 = 不超时。 */
     val waitGoTimeoutMs: Long = 5000L,
+    /** 悬浮窗整体缩放因子（1.0 = 默认大小）。 */
+    val overlayScaleFactor: Float = 1.0f,
+    /** 悬浮窗底部 glyph 序列图标边长（dp）。 */
+    val overlayGlyphSizeDp: Float = 28f,
+    /** 悬浮窗上下行间距（dp），默认 0。 */
+    val overlayVerticalSpacingDp: Float = 0f,
+    /** 是否隐藏悬浮窗上的 普/中 按钮行。 */
+    val overlayHideCommandButtons: Boolean = false,
+    /** 是否启用输入（手势注入）。 */
+    val inputEnabled: Boolean = true,
 )

@@ -131,7 +131,7 @@ class GlyphAccessibilityService : AccessibilityService() {
         val hardwareBuffer = screenshot.hardwareBuffer
         return try {
             runCatching {
-                val colorSpace = screenshot.colorSpace ?: ColorSpace.get(ColorSpace.Named.SRGB)
+                val colorSpace = screenshot.colorSpace
                 val wrappedBitmap = Bitmap.wrapHardwareBuffer(hardwareBuffer, colorSpace)
                 val outputBitmap = wrappedBitmap?.copy(Bitmap.Config.ARGB_8888, false)
                 wrappedBitmap?.recycle()
@@ -152,6 +152,17 @@ class GlyphAccessibilityService : AccessibilityService() {
     }
 
     private suspend fun executeDrawCommand(command: DrawCommand) {
+        if (!RuntimeStateBus.state.value.inputEnabled) {
+            Log.i(LOG_TAG, "[DRAW][F${command.sourceFrameId}] input disabled; skipping draw command")
+            DrawCommandBus.tryEmitCompletion(
+                DrawCompletion(
+                    sourceFrameId = command.sourceFrameId,
+                    doneButtonTapped = false,
+                    isCommandOpenPreset = command.isCommandOpenPreset,
+                )
+            )
+            return
+        }
         val commandStartElapsedMs = SystemClock.elapsedRealtime()
         RuntimeStateBus.setDrawRemainingCount(command.glyphNames.size)
         val queueDelayMs = (commandStartElapsedMs - command.emittedAtElapsedMs).coerceAtLeast(0L)
@@ -339,8 +350,8 @@ class GlyphAccessibilityService : AccessibilityService() {
             val toIndex = segment[index]
             val fromNode = nodeMap[fromIndex] ?: continue
             val toNode = nodeMap[toIndex] ?: continue
-            if (isCrowdedHorizontalRowLink(fromIndex, toIndex)) {
-                appendCrowdedHorizontalRowDetour(path, fromNode, toNode, frameWidth, frameHeight)
+        if (isCrowdedHorizontalRowLink(fromIndex, toIndex)) {
+            appendCrowdedHorizontalRowDetour(path, fromNode, toNode, goUp = isRow3Link(fromIndex, toIndex), frameWidth, frameHeight)
             } else if (isImperfectDirectLink(glyphName, fromIndex, toIndex)) {
                 appendImperfectDirectLinkDetour(path, toNode, nodeMap, frameWidth, frameHeight)
             } else {
@@ -357,10 +368,17 @@ class GlyphAccessibilityService : AccessibilityService() {
             (fromIndex == ROW5_RIGHT_NODE && toIndex == ROW5_LEFT_NODE)
     }
 
+    /** Row 3 (nodes 9↔6) 在中心上方，绕行向上；Row 5 (nodes 8↔7) 在中心下方，绕行向下。 */
+    private fun isRow3Link(fromIndex: Int, toIndex: Int): Boolean {
+        return (fromIndex == ROW3_LEFT_NODE && toIndex == ROW3_RIGHT_NODE) ||
+            (fromIndex == ROW3_RIGHT_NODE && toIndex == ROW3_LEFT_NODE)
+    }
+
     private fun appendCrowdedHorizontalRowDetour(
         path: Path,
         fromNode: NodePosition,
         toNode: NodePosition,
+        goUp: Boolean,
         frameWidth: Int,
         frameHeight: Int,
     ) {
@@ -371,7 +389,11 @@ class GlyphAccessibilityService : AccessibilityService() {
         val riseFrom = abs(apexX - fromNode.x)
         val riseTo = abs(apexX - toNode.x)
         val rise = maxOf(riseFrom, riseTo)
-        val apexY = (baseY - rise).coerceIn(1f, maxY)
+        val apexY = if (goUp) {
+            (baseY - rise).coerceIn(1f, maxY)
+        } else {
+            (baseY + rise).coerceIn(1f, maxY)
+        }
 
         path.lineTo(apexX, apexY)
         path.lineTo(toNode.x, toNode.y)

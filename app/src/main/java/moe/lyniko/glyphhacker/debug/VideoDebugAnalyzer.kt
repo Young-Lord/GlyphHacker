@@ -8,6 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import moe.lyniko.glyphhacker.data.AppSettings
 import moe.lyniko.glyphhacker.glyph.CalibrationProfile
+import moe.lyniko.glyphhacker.glyph.GlyphPhase
 import moe.lyniko.glyphhacker.glyph.GlyphRecognitionEngine
 import moe.lyniko.glyphhacker.glyph.GlyphSnapshot
 import moe.lyniko.glyphhacker.util.resizeBitmapToMax
@@ -18,6 +19,8 @@ data class DebugFrameResult(
     val durationMs: Long,
     val frame: Bitmap,
     val snapshot: GlyphSnapshot,
+    /** AUTO_DRAW 开始时的视频时间戳；-1 表示尚未触发。 */
+    val drawStartVideoMs: Long = -1L,
 )
 
 class VideoDebugAnalyzer(
@@ -32,7 +35,9 @@ class VideoDebugAnalyzer(
     private var retriever: MediaMetadataRetriever? = null
     private var sourceUri: String? = null
     private var durationMs: Long = 0L
-    private val sessionCheckpoints = TreeMap<Long, GlyphRecognitionEngine.SessionState>()
+    private val sessionCheckpoints = TreeMap<Long, Pair<GlyphRecognitionEngine.SessionState, Long>>()
+    /** AUTO_DRAW 开始时的视频时间戳；-1 表示尚未触发。 */
+    private var drawStartVideoMs: Long = -1L
 
     suspend fun prepare(context: Context, videoUri: Uri): Long {
         return withContext(Dispatchers.IO) {
@@ -53,6 +58,7 @@ class VideoDebugAnalyzer(
 
     fun resetSession(clearCheckpoints: Boolean = false) {
         recognitionEngine.resetSession()
+        drawStartVideoMs = -1L
         if (clearCheckpoints) {
             sessionCheckpoints.clear()
         }
@@ -60,6 +66,7 @@ class VideoDebugAnalyzer(
 
     fun release() {
         recognitionEngine.resetSession()
+        drawStartVideoMs = -1L
         sessionCheckpoints.clear()
         releaseInternal()
     }
@@ -92,10 +99,13 @@ class VideoDebugAnalyzer(
             (clampedTarget - checkpointEntry.key) <= warmupWindow
 
         val replayStart = if (canUseCheckpoint) {
-            recognitionEngine.restoreSessionState(checkpointEntry!!.value)
+            val (engineState, savedDrawStart) = checkpointEntry.value
+            recognitionEngine.restoreSessionState(engineState)
+            drawStartVideoMs = savedDrawStart
             checkpointEntry.key
         } else {
             recognitionEngine.resetSession()
+            drawStartVideoMs = -1L
             (clampedTarget - warmupWindow).coerceAtLeast(0L)
         }
 
@@ -182,6 +192,13 @@ class VideoDebugAnalyzer(
             )
         }
 
+        // 追踪 draw 开始的视频时间戳
+        if (snapshot.drawRequested) {
+            drawStartVideoMs = safeTimestamp
+        } else if (snapshot.phase == GlyphPhase.IDLE) {
+            drawStartVideoMs = -1L
+        }
+
         rememberCheckpoint(safeTimestamp)
 
         return DebugFrameResult(
@@ -189,6 +206,7 @@ class VideoDebugAnalyzer(
             durationMs = totalDuration,
             frame = frame,
             snapshot = snapshot,
+            drawStartVideoMs = drawStartVideoMs,
         )
     }
 
@@ -200,7 +218,7 @@ class VideoDebugAnalyzer(
         if (hasNearbyLower || hasNearbyHigher) {
             return
         }
-        sessionCheckpoints[timestampMs] = recognitionEngine.snapshotSessionState()
+        sessionCheckpoints[timestampMs] = recognitionEngine.snapshotSessionState() to drawStartVideoMs
         while (sessionCheckpoints.size > MAX_CHECKPOINT_COUNT) {
             sessionCheckpoints.pollFirstEntry()
         }
@@ -224,7 +242,7 @@ class VideoDebugAnalyzer(
             progressTopPercent = progressTopPercent,
             progressBottomPercent = progressBottomPercent,
             suppressGlyphTracking = false,
-            nodePatchSize = nodePatchSize,
+            nodePatchSize = 0, // 录屏压缩导致逐像素比对失败，跳过
             nodePatchMaxMae = nodePatchMaxMae,
             waitGoTimeoutMs = waitGoTimeoutMs,
         )

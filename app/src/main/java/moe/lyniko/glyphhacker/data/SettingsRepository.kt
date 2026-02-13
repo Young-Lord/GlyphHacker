@@ -97,7 +97,7 @@ class SettingsRepository(context: Context) {
     }
 
     suspend fun updateGoColorDeltaThreshold(value: Float) {
-        prefs.edit().putFloat(KEY_GO_COLOR_DELTA, value.coerceIn(1f, 80f)).apply()
+        prefs.edit().putFloat(KEY_GO_COLOR_DELTA, value.coerceIn(0.5f, 30f)).apply()
         refresh()
     }
 
@@ -242,6 +242,31 @@ class SettingsRepository(context: Context) {
         refresh()
     }
 
+    suspend fun updateOverlayScaleFactor(value: Float) {
+        prefs.edit().putFloat(KEY_OVERLAY_SCALE_FACTOR, value.coerceIn(0.5f, 3.0f)).apply()
+        refresh()
+    }
+
+    suspend fun updateOverlayGlyphSizeDp(value: Float) {
+        prefs.edit().putFloat(KEY_OVERLAY_GLYPH_SIZE_DP, value.coerceIn(12f, 80f)).apply()
+        refresh()
+    }
+
+    suspend fun updateOverlayVerticalSpacingDp(value: Float) {
+        prefs.edit().putFloat(KEY_OVERLAY_VERTICAL_SPACING_DP, value.coerceIn(0f, 40f)).apply()
+        refresh()
+    }
+
+    suspend fun updateOverlayHideCommandButtons(hide: Boolean) {
+        prefs.edit().putBoolean(KEY_OVERLAY_HIDE_COMMAND_BUTTONS, hide).apply()
+        refresh()
+    }
+
+    suspend fun updateInputEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_INPUT_ENABLED, enabled).apply()
+        refresh()
+    }
+
     suspend fun updateTemplateImport(
         sourceUri: String?,
         base64: String?,
@@ -314,7 +339,7 @@ class SettingsRepository(context: Context) {
             val commandOpenMaxLuma = config.optDouble("commandOpenMaxLuma", 1.0).toFloat()
             val glyphDisplayMinLuma = config.optDouble("glyphDisplayMinLuma", 10.0).toFloat()
             val glyphDisplayTopBarsMinLuma = config.optDouble("glyphDisplayTopBarsMinLuma", 1.0).toFloat()
-            val goColorDelta = config.optDouble("goColorDeltaThreshold", 18.0).toFloat()
+            val goColorDelta = config.optDouble("goColorDeltaThreshold", 3.0).toFloat()
             val countdownVisibleThreshold = config.optDouble(
                 "countdownVisibleThreshold",
                 config.optDouble("readyBlackThresholdLuma", 5.0),
@@ -377,6 +402,11 @@ class SettingsRepository(context: Context) {
             val nodePatchSize = config.optInt("nodePatchSize", 0)
             val nodePatchMaxMae = config.optDouble("nodePatchMaxMae", 12.0).toFloat()
             val waitGoTimeoutMs = config.optLong("waitGoTimeoutMs", 5000L)
+            val overlayScaleFactor = config.optDouble("overlayScaleFactor", 1.0).toFloat()
+            val overlayGlyphSizeDp = config.optDouble("overlayGlyphSizeDp", 28.0).toFloat()
+            val overlayVerticalSpacingDp = config.optDouble("overlayVerticalSpacingDp", 0.0).toFloat()
+            val overlayHideCommandButtons = config.optBoolean("overlayHideCommandButtons", false)
+            val inputEnabled = config.optBoolean("inputEnabled", true)
 
             prefs.edit()
                 .putString(KEY_RECOGNITION_MODE, mode.name)
@@ -398,7 +428,7 @@ class SettingsRepository(context: Context) {
                 .putFloat(KEY_COMMAND_OPEN_MAX_LUMA, commandOpenMaxLuma.coerceIn(0f, 30f))
                 .putFloat(KEY_GLYPH_DISPLAY_MIN_LUMA, glyphDisplayMinLuma.coerceIn(0f, 80f))
                 .putFloat(KEY_GLYPH_DISPLAY_TOP_BARS_MIN_LUMA, glyphDisplayTopBarsMinLuma.coerceIn(0f, 40f))
-                .putFloat(KEY_GO_COLOR_DELTA, goColorDelta.coerceIn(1f, 80f))
+                .putFloat(KEY_GO_COLOR_DELTA, goColorDelta.coerceIn(0.5f, 30f))
                 .putFloat(KEY_COUNTDOWN_VISIBLE_THRESHOLD, countdownVisibleThreshold.coerceIn(1f, 40f))
                 .putFloat(KEY_PROGRESS_VISIBLE_THRESHOLD, progressVisibleThreshold.coerceIn(1f, 80f))
                 .putFloat(KEY_FIRST_BOX_TOP_PERCENT, firstBoxTopPercent.coerceIn(0f, 30f))
@@ -424,6 +454,11 @@ class SettingsRepository(context: Context) {
                 .putInt(KEY_NODE_PATCH_SIZE, nodePatchSize.coerceIn(0, 80))
                 .putFloat(KEY_NODE_PATCH_MAX_MAE, nodePatchMaxMae.coerceIn(1f, 80f))
                 .putLong(KEY_WAIT_GO_TIMEOUT_MS, waitGoTimeoutMs.coerceIn(0L, 30000L))
+                .putFloat(KEY_OVERLAY_SCALE_FACTOR, overlayScaleFactor.coerceIn(0.5f, 3.0f))
+                .putFloat(KEY_OVERLAY_GLYPH_SIZE_DP, overlayGlyphSizeDp.coerceIn(12f, 80f))
+                .putFloat(KEY_OVERLAY_VERTICAL_SPACING_DP, overlayVerticalSpacingDp.coerceIn(0f, 40f))
+                .putBoolean(KEY_OVERLAY_HIDE_COMMAND_BUTTONS, overlayHideCommandButtons)
+                .putBoolean(KEY_INPUT_ENABLED, inputEnabled)
                 .apply()
             refresh()
         }
@@ -473,7 +508,7 @@ class SettingsRepository(context: Context) {
             commandOpenMaxLuma = prefs.getFloat(KEY_COMMAND_OPEN_MAX_LUMA, 1f),
             glyphDisplayMinLuma = prefs.getFloat(KEY_GLYPH_DISPLAY_MIN_LUMA, 10f),
             glyphDisplayTopBarsMinLuma = prefs.getFloat(KEY_GLYPH_DISPLAY_TOP_BARS_MIN_LUMA, 1f),
-            goColorDeltaThreshold = prefs.getFloat(KEY_GO_COLOR_DELTA, 18f),
+            goColorDeltaThreshold = prefs.getFloat(KEY_GO_COLOR_DELTA, 3f),
             countdownVisibleThreshold = prefs.getFloat(KEY_COUNTDOWN_VISIBLE_THRESHOLD, 5f),
             progressVisibleThreshold = prefs.getFloat(KEY_PROGRESS_VISIBLE_THRESHOLD, 20f),
             firstBoxTopPercent = prefs.getFloat(KEY_FIRST_BOX_TOP_PERCENT, 9f).coerceIn(0f, 30f),
@@ -501,6 +536,11 @@ class SettingsRepository(context: Context) {
             nodePatchSize = prefs.getInt(KEY_NODE_PATCH_SIZE, 0).coerceIn(0, 80),
             nodePatchMaxMae = prefs.getFloat(KEY_NODE_PATCH_MAX_MAE, 12f).coerceIn(1f, 80f),
             waitGoTimeoutMs = prefs.getLong(KEY_WAIT_GO_TIMEOUT_MS, 5000L).coerceIn(0L, 30000L),
+            overlayScaleFactor = prefs.getFloat(KEY_OVERLAY_SCALE_FACTOR, 1.0f).coerceIn(0.5f, 3.0f),
+            overlayGlyphSizeDp = prefs.getFloat(KEY_OVERLAY_GLYPH_SIZE_DP, 28f).coerceIn(12f, 80f),
+            overlayVerticalSpacingDp = prefs.getFloat(KEY_OVERLAY_VERTICAL_SPACING_DP, 0f).coerceIn(0f, 40f),
+            overlayHideCommandButtons = prefs.getBoolean(KEY_OVERLAY_HIDE_COMMAND_BUTTONS, false),
+            inputEnabled = prefs.getBoolean(KEY_INPUT_ENABLED, true),
         )
     }
 
@@ -547,6 +587,11 @@ class SettingsRepository(context: Context) {
         const val KEY_NODE_PATCH_SIZE = "node_patch_size"
         const val KEY_NODE_PATCH_MAX_MAE = "node_patch_max_mae"
         const val KEY_WAIT_GO_TIMEOUT_MS = "wait_go_timeout_ms"
+        const val KEY_OVERLAY_SCALE_FACTOR = "overlay_scale_factor"
+        const val KEY_OVERLAY_GLYPH_SIZE_DP = "overlay_glyph_size_dp"
+        const val KEY_OVERLAY_VERTICAL_SPACING_DP = "overlay_vertical_spacing_dp"
+        const val KEY_OVERLAY_HIDE_COMMAND_BUTTONS = "overlay_hide_command_buttons"
+        const val KEY_INPUT_ENABLED = "input_enabled"
     }
 }
 
@@ -765,6 +810,11 @@ private fun AppSettings.toJson(): JSONObject {
     json.put("nodePatchSize", nodePatchSize)
     json.put("nodePatchMaxMae", nodePatchMaxMae.toDouble())
     json.put("waitGoTimeoutMs", waitGoTimeoutMs)
+    json.put("overlayScaleFactor", overlayScaleFactor.toDouble())
+    json.put("overlayGlyphSizeDp", overlayGlyphSizeDp.toDouble())
+    json.put("overlayVerticalSpacingDp", overlayVerticalSpacingDp.toDouble())
+    json.put("overlayHideCommandButtons", overlayHideCommandButtons)
+    json.put("inputEnabled", inputEnabled)
     return json
 }
 

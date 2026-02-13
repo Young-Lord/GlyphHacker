@@ -44,14 +44,24 @@ class OverlayControlService : Service() {
     private var rootView: View? = null
     private var statusView: TextView? = null
     private var toggleView: TextView? = null
+    private var commandRow: LinearLayout? = null
     private var commandOpenPrimaryView: TextView? = null
     private var commandOpenSecondaryView: TextView? = null
+    private var glyphSequenceView: GlyphSequenceView? = null
     private var overlayParams: WindowManager.LayoutParams? = null
     private var captureRunning: Boolean = false
     private var recognitionEnabled: Boolean = true
     private var commandOpenPrimaryAction: CommandOpenPrimaryAction = CommandOpenPrimaryAction.SEND_SPEED
     private var commandOpenSecondaryAction: CommandOpenSecondaryAction = CommandOpenSecondaryAction.MEDIUM
     private var commandOpenHideSlowOption: Boolean = false
+
+    // Sequence persistence state
+    private var previousPhase: GlyphPhase = GlyphPhase.IDLE
+    private var persistedSequence: List<String> = emptyList()
+    private var sequencePersistedAtMs: Long = 0L
+
+    // Cached scale-dependent base values (at scale=1.0)
+    private var baseDensity: Float = 1f
 
     override fun onCreate() {
         super.onCreate()
@@ -102,9 +112,21 @@ class OverlayControlService : Service() {
         val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         windowManager = wm
 
-        val padding = resources.displayMetrics.density.times(6f).toInt()
-        val toggleMinWidth = resources.displayMetrics.density.times(34f).toInt()
+        baseDensity = resources.displayMetrics.density
+        val scale = settingsRepository.settingsFlow.value.overlayScaleFactor
+        val density = baseDensity * scale
+        val padding = density.times(6f).toInt()
+        val toggleMinWidth = density.times(34f).toInt()
+        val verticalSpacingPx = (settingsRepository.settingsFlow.value.overlayVerticalSpacingDp * baseDensity * scale).toInt()
+
+        // Root: vertical LinearLayout, children left-aligned so widths are independent
         val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.START
+        }
+
+        // --- Control panel (top rows) with its own background ---
+        val controlPanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(0xB30F1420.toInt())
             setPadding(padding, padding, padding, padding)
@@ -119,12 +141,12 @@ class OverlayControlService : Service() {
         val status = TextView(this).apply {
             text = "闲0"
             setTextColor(0xFFE8F0FF.toInt())
-            textSize = 14f
+            textSize = 14f * scale
             setTypeface(Typeface.MONOSPACE, Typeface.BOLD)
         }
 
         val toggleButton = TextView(this).apply {
-            textSize = 12f
+            textSize = 12f * scale
             setTypeface(Typeface.MONOSPACE, Typeface.BOLD)
             minWidth = toggleMinWidth
             gravity = Gravity.CENTER
@@ -158,7 +180,7 @@ class OverlayControlService : Service() {
 
         val closeButton = TextView(this).apply {
             text = " X "
-            textSize = 12f
+            textSize = 12f * scale
             setTextColor(0xFFFFB4B4.toInt())
             setTypeface(Typeface.MONOSPACE, Typeface.BOLD)
             setPadding(padding, 0, 0, 0)
@@ -166,13 +188,23 @@ class OverlayControlService : Service() {
                 stopSelf()
             }
             setOnLongClickListener {
-                CaptureForegroundService.resetToIdle(this@OverlayControlService)
+                exitApp()
                 true
             }
         }
 
+        topRow.addView(toggleButton)
+        topRow.addView(status)
+        topRow.addView(closeButton)
+
+        val cmdRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(0, padding / 2, 0, 0)
+        }
+
         val commandPrimaryButton = TextView(this).apply {
-            textSize = 12f
+            textSize = 12f * scale
             setTypeface(Typeface.MONOSPACE, Typeface.BOLD)
             gravity = Gravity.CENTER
             setPadding(padding, padding / 3, padding, padding / 3)
@@ -185,7 +217,7 @@ class OverlayControlService : Service() {
         }
 
         val commandSecondaryButton = TextView(this).apply {
-            textSize = 12f
+            textSize = 12f * scale
             setTypeface(Typeface.MONOSPACE, Typeface.BOLD)
             gravity = Gravity.CENTER
             setPadding(padding, padding / 3, padding, padding / 3)
@@ -197,30 +229,38 @@ class OverlayControlService : Service() {
             }
         }
 
-        topRow.addView(toggleButton)
-        topRow.addView(status)
-        topRow.addView(closeButton)
+        val commandItemWeight = LinearLayout.LayoutParams(
+            0,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            1f,
+        )
+        cmdRow.addView(commandPrimaryButton, commandItemWeight)
+        cmdRow.addView(commandSecondaryButton, LinearLayout.LayoutParams(commandItemWeight))
 
-        val commandRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            setPadding(0, padding / 2, 0, 0)
+        controlPanel.addView(topRow)
+        controlPanel.addView(cmdRow)
+
+        // Hide command row if setting is on
+        val hideCommands = settingsRepository.settingsFlow.value.overlayHideCommandButtons
+        cmdRow.visibility = if (hideCommands) View.GONE else View.VISIBLE
+
+        // --- Glyph sequence row: separate view with its own background ---
+        val glyphSeqView = GlyphSequenceView(this).apply {
+            setOnClickListener {
+                clearPersistedSequence()
+            }
         }
-        val commandPrimaryLayoutParams = LinearLayout.LayoutParams(
-            0,
-            LinearLayout.LayoutParams.WRAP_CONTENT,
-            1f,
-        )
-        val commandSecondaryLayoutParams = LinearLayout.LayoutParams(
-            0,
-            LinearLayout.LayoutParams.WRAP_CONTENT,
-            1f,
-        )
-        commandRow.addView(commandPrimaryButton, commandPrimaryLayoutParams)
-        commandRow.addView(commandSecondaryButton, commandSecondaryLayoutParams)
 
-        root.addView(topRow)
-        root.addView(commandRow)
+        root.addView(controlPanel, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+        ))
+        root.addView(glyphSeqView, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+        ).apply {
+            topMargin = verticalSpacingPx.coerceAtLeast((baseDensity * scale * 2f).toInt())
+        })
 
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -239,8 +279,10 @@ class OverlayControlService : Service() {
         rootView = root
         statusView = status
         toggleView = toggleButton
+        commandRow = cmdRow
         commandOpenPrimaryView = commandPrimaryButton
         commandOpenSecondaryView = commandSecondaryButton
+        glyphSequenceView = glyphSeqView
         overlayParams = params
         applyCommandOpenActionState(commandPrimaryButton, commandOpenPrimaryAction.label)
         applyCommandOpenActionState(commandSecondaryButton, commandOpenSecondaryAction.label)
@@ -267,8 +309,57 @@ class OverlayControlService : Service() {
                 recognitionEnabled = state.recognitionEnabled
                 val running = state.captureRunning && state.recognitionEnabled
                 toggleView?.let { applyToggleState(it, running) }
+
+                val displaySequence = resolveDisplaySequence(state.phase, state.sequence)
+                glyphSequenceView?.updateSequence(displaySequence)
+
+                previousPhase = state.phase
             }
         }
+    }
+
+    /**
+     * Resolve which glyph sequence to display in the overlay.
+     *
+     * When transitioning from AUTO_DRAW to IDLE, persist the last sequence for up to 20s.
+     * Clear persisted sequence when entering COMMAND_OPEN or after 20s timeout.
+     */
+    private fun resolveDisplaySequence(currentPhase: GlyphPhase, currentSequence: List<String>): List<String> {
+        if (currentSequence.isNotEmpty()) {
+            if (currentPhase == GlyphPhase.AUTO_DRAW || currentPhase == GlyphPhase.GLYPH_DISPLAY || currentPhase == GlyphPhase.WAIT_GO) {
+                persistedSequence = currentSequence
+                sequencePersistedAtMs = System.currentTimeMillis()
+            }
+            return currentSequence
+        }
+
+        // Transition from AUTO_DRAW to IDLE: start persisting
+        if (previousPhase == GlyphPhase.AUTO_DRAW && currentPhase == GlyphPhase.IDLE && persistedSequence.isNotEmpty()) {
+            sequencePersistedAtMs = System.currentTimeMillis()
+        }
+
+        // Entering COMMAND_OPEN: clear persisted sequence (new hack cycle)
+        if (currentPhase == GlyphPhase.COMMAND_OPEN) {
+            clearPersistedSequence()
+            return emptyList()
+        }
+
+        // Check if persisted sequence is still valid (within 20s)
+        if (persistedSequence.isNotEmpty() && currentPhase == GlyphPhase.IDLE) {
+            val elapsed = System.currentTimeMillis() - sequencePersistedAtMs
+            if (elapsed < SEQUENCE_PERSIST_DURATION_MS) {
+                return persistedSequence
+            }
+            clearPersistedSequence()
+        }
+
+        return emptyList()
+    }
+
+    private fun clearPersistedSequence() {
+        persistedSequence = emptyList()
+        sequencePersistedAtMs = 0L
+        glyphSequenceView?.updateSequence(emptyList())
     }
 
     private fun applyToggleState(view: TextView, running: Boolean) {
@@ -310,6 +401,11 @@ class OverlayControlService : Service() {
         }
     }
 
+    private fun exitApp() {
+        CaptureForegroundService.stop(this)
+        stopSelf()
+    }
+
     private fun shouldUseAccessibilityScreenshotCapture(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             return false
@@ -340,13 +436,61 @@ class OverlayControlService : Service() {
                 commandOpenPrimaryView?.let { applyCommandOpenActionState(it, commandOpenPrimaryAction.label) }
                 commandOpenSecondaryView?.let { applyCommandOpenActionState(it, commandOpenSecondaryAction.label) }
 
+                // Apply scale by adjusting text sizes and paddings (not scaleX/scaleY)
+                val scale = settings.overlayScaleFactor
+                val density = baseDensity * scale
+                val padding = density.times(6f).toInt()
+                val toggleMinWidth = density.times(34f).toInt()
+
+                statusView?.textSize = 14f * scale
+                toggleView?.apply {
+                    textSize = 12f * scale
+                    minWidth = toggleMinWidth
+                    setPadding(padding / 2, 0, padding, 0)
+                }
+                // closeButton is the 3rd child of topRow
+                val topRow = (root as? LinearLayout)?.getChildAt(0)
+                    ?.let { (it as? LinearLayout)?.getChildAt(0) } as? LinearLayout
+                topRow?.getChildAt(2)?.let { closeBtn ->
+                    (closeBtn as? TextView)?.textSize = 12f * scale
+                    closeBtn.setPadding(padding, 0, 0, 0)
+                }
+
+                commandOpenPrimaryView?.apply {
+                    textSize = 12f * scale
+                    setPadding(padding, padding / 3, padding, padding / 3)
+                }
+                commandOpenSecondaryView?.apply {
+                    textSize = 12f * scale
+                    setPadding(padding, padding / 3, padding, padding / 3)
+                }
+
+                // Update control panel padding
+                val controlPanel = (root as? LinearLayout)?.getChildAt(0) as? LinearLayout
+                controlPanel?.setPadding(padding, padding, padding, padding)
+
+                // Command row padding and visibility
+                commandRow?.apply {
+                    setPadding(0, padding / 2, 0, 0)
+                    visibility = if (settings.overlayHideCommandButtons) View.GONE else View.VISIBLE
+                }
+
+                val glyphSizePx = (settings.overlayGlyphSizeDp * baseDensity).toInt()
+                glyphSequenceView?.setGlyphSizePx(glyphSizePx)
+
+                // Update glyph sequence view top margin (vertical spacing)
+                val verticalSpacingPx = (settings.overlayVerticalSpacingDp * baseDensity * scale).toInt()
+                glyphSequenceView?.let { seqView ->
+                    val lp = seqView.layoutParams as? LinearLayout.LayoutParams
+                    lp?.topMargin = verticalSpacingPx.coerceAtLeast((baseDensity * scale * 2f).toInt())
+                    seqView.layoutParams = lp
+                }
+
                 val width = resources.displayMetrics.widthPixels
                 val height = resources.displayMetrics.heightPixels
-                val targetWidth = if (root.width > 0) root.width else (width * 0.25f).toInt()
-                val targetHeight = if (root.height > 0) root.height else (height * 0.07f).toInt()
 
-                params.x = (settings.overlayXRatio * width).toInt().coerceIn(0, (width - targetWidth).coerceAtLeast(0))
-                params.y = (settings.overlayYRatio * height).toInt().coerceIn(0, (height - targetHeight).coerceAtLeast(0))
+                params.x = (settings.overlayXRatio * width).toInt().coerceIn(0, width)
+                params.y = (settings.overlayYRatio * height).toInt().coerceIn(0, height)
                 wm.updateViewLayout(root, params)
             }
         }
@@ -378,6 +522,7 @@ class OverlayControlService : Service() {
     companion object {
         private const val CHANNEL_ID = "glyph_overlay"
         private const val OVERLAY_NOTIFICATION_ID = 3202
+        private const val SEQUENCE_PERSIST_DURATION_MS = 20_000L
 
         fun start(context: Context) {
             ContextCompat.startForegroundService(

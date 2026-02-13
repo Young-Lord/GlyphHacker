@@ -588,6 +588,21 @@ class CaptureForegroundService : Service() {
         val processDurationMs = elapsedMs(processStartNs)
         RuntimeStateBus.updateFromSnapshot(snapshot, captureRunning = true)
 
+        // When input is disabled and AUTO_DRAW would trigger, skip directly to IDLE
+        if (snapshot.drawRequested && !RuntimeStateBus.state.value.inputEnabled) {
+            Log.i(
+                LOG_TAG,
+                "[CAPTURE][F$frameId] input disabled; skipping AUTO_DRAW -> IDLE seq=${formatSequence(snapshot.sequence)}",
+            )
+            recognitionEngine.resetSession()
+            RuntimeStateBus.setIdle(captureRunning = true)
+            lastLoggedPhase = GlyphPhase.IDLE
+            commandOpenPresetIssued = false
+            commandPresetDrawInProgress = false
+            frame.recycle()
+            return snapshot
+        }
+
         if (snapshot.phase != lastLoggedPhase) {
             Log.i(
                 LOG_TAG,

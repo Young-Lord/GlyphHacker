@@ -36,6 +36,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _calibrating = MutableStateFlow(false)
     val calibrating = _calibrating.asStateFlow()
 
+    init {
+        // Restore persisted inputEnabled into RuntimeStateBus
+        RuntimeStateBus.setInputEnabled(settingsRepository.settingsFlow.value.inputEnabled)
+    }
+
     fun clearMessage() {
         _message.value = null
     }
@@ -185,6 +190,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setOverlayYRatio(value: Float) {
         viewModelScope.launch { settingsRepository.updateOverlayYRatio(value) }
+    }
+
+    fun setOverlayScaleFactor(value: Float) {
+        viewModelScope.launch { settingsRepository.updateOverlayScaleFactor(value) }
+    }
+
+    fun setOverlayGlyphSizeDp(value: Float) {
+        viewModelScope.launch { settingsRepository.updateOverlayGlyphSizeDp(value) }
+    }
+
+    fun setOverlayVerticalSpacingDp(value: Float) {
+        viewModelScope.launch { settingsRepository.updateOverlayVerticalSpacingDp(value) }
+    }
+
+    fun setOverlayHideCommandButtons(hide: Boolean) {
+        viewModelScope.launch { settingsRepository.updateOverlayHideCommandButtons(hide) }
+    }
+
+    fun setInputEnabled(enabled: Boolean) {
+        RuntimeStateBus.setInputEnabled(enabled)
+        viewModelScope.launch { settingsRepository.updateInputEnabled(enabled) }
     }
 
     fun setBlankReferenceUri(uri: Uri?) {

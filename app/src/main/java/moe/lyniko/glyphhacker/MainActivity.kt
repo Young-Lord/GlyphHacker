@@ -49,6 +49,7 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
@@ -67,9 +68,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
@@ -253,6 +252,12 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     debugVideoUri = uri
+                    // 导入后自动 prepare，获取时长以显示控制面板
+                    debugSeekJob = scope.launch {
+                        val duration = debugAnalyzer.prepare(context, uri)
+                        debugDurationMs = duration
+                        debugPreparedVideoKey = uri.toString()
+                    }
                 }
 
                 var pendingProjectionAction by remember { mutableStateOf<ProjectionGrantAction?>(null) }
@@ -484,6 +489,88 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                fun startDebugPlayback(video: Uri, calibration: CalibrationProfile) {
+                    debugRunning = true
+                    debugJob = scope.launch {
+                        val template = loadDebugTemplateBitmap()
+                        try {
+                            if (!ensureDebugPrepared(video)) {
+                                context.toast("视频时长异常，无法分析")
+                                return@launch
+                            }
+                            var anchorPosition = debugTimestampMs.coerceIn(0L, debugDurationMs)
+                            var anchorRealtime = SystemClock.elapsedRealtime()
+                            var anchorSpeed = latestSettings.debugPlaybackSpeed.coerceIn(0.25f, 4f)
+                            var lastAnalyzedPosition = debugResult
+                                ?.timestampMs
+                                ?.coerceIn(0L, debugDurationMs)
+                                ?: -1L
+
+                            while (debugRunning) {
+                                val activeSettings = latestSettings
+                                val loopStart = SystemClock.elapsedRealtime()
+                                val speed = activeSettings.debugPlaybackSpeed.coerceIn(0.25f, 4f)
+                                if (kotlin.math.abs(speed - anchorSpeed) > 0.001f) {
+                                    val elapsedAtSwitch = loopStart - anchorRealtime
+                                    anchorPosition = (
+                                        anchorPosition + (elapsedAtSwitch.toDouble() * anchorSpeed.toDouble()).toLong()
+                                        ).coerceIn(0L, debugDurationMs)
+                                    anchorRealtime = loopStart
+                                    anchorSpeed = speed
+                                }
+
+                                val elapsedSinceAnchor = loopStart - anchorRealtime
+                                val expectedPosition = (
+                                    anchorPosition + (elapsedSinceAnchor.toDouble() * anchorSpeed.toDouble()).toLong()
+                                    ).coerceIn(0L, debugDurationMs)
+                                debugTimestampMs = expectedPosition
+
+                                val step = frameStepMs(activeSettings)
+                                val analyzeGap = (step / 2L).coerceAtLeast(80L)
+                                val shouldAnalyze =
+                                    debugResult == null ||
+                                        expectedPosition >= debugDurationMs ||
+                                        (expectedPosition - lastAnalyzedPosition) >= analyzeGap
+
+                                if (shouldAnalyze) {
+                                    val warmupMs = (step * 18L).coerceIn(step, 10_000L)
+                                    val frameResult = withContext(Dispatchers.Default) {
+                                        debugAnalyzer.replayToTimestamp(
+                                            context = context,
+                                            videoUri = video,
+                                            targetTimestampMs = expectedPosition,
+                                            stepMs = step,
+                                            settings = activeSettings,
+                                            calibrationProfile = calibration,
+                                            startTemplate = template,
+                                            maxWarmupMs = warmupMs,
+                                        )
+                                    }
+                                    if (frameResult != null) {
+                                        setDebugResult(frameResult)
+                                        debugDurationMs = frameResult.durationMs
+                                        lastAnalyzedPosition = frameResult.timestampMs
+                                    } else {
+                                        lastAnalyzedPosition = expectedPosition
+                                    }
+                                }
+
+                                if (expectedPosition >= debugDurationMs) {
+                                    debugRunning = false
+                                    break
+                                }
+
+                                val loopCost = SystemClock.elapsedRealtime() - loopStart
+                                delay((16L - loopCost).coerceAtLeast(4L))
+                            }
+                        } finally {
+                            template?.recycle()
+                            debugRunning = false
+                            debugJob = null
+                        }
+                    }
+                }
+
                 LaunchedEffect(message) {
                     val value = message ?: return@LaunchedEffect
                     snackbarHostState.showSnackbar(value)
@@ -622,6 +709,7 @@ class MainActivity : ComponentActivity() {
                                     onSetRecognitionMode = viewModel::setRecognitionMode,
                                     onSetUseAccessibilityScreenshotCapture = viewModel::setUseAccessibilityScreenshotCapture,
                                     onSetAutoGrantAccessibilityViaShizukuOnLaunch = viewModel::setAutoGrantAccessibilityViaShizukuOnLaunch,
+                                    onSetInputEnabled = viewModel::setInputEnabled,
                                     onSetIdleFrameInterval = viewModel::setIdleFrameIntervalMs,
                                     onSetNonIdleFrameInterval = viewModel::setNonIdleFrameIntervalMs,
                                     onSetEdgeThreshold = viewModel::setEdgeActivationThreshold,
@@ -650,6 +738,10 @@ class MainActivity : ComponentActivity() {
                                     onSetDoneButtonYPercent = viewModel::setDoneButtonYPercent,
                                     onSetOverlayXRatio = viewModel::setOverlayXRatio,
                                     onSetOverlayYRatio = viewModel::setOverlayYRatio,
+                                    onSetOverlayScaleFactor = viewModel::setOverlayScaleFactor,
+                                    onSetOverlayGlyphSizeDp = viewModel::setOverlayGlyphSizeDp,
+                                    onSetOverlayVerticalSpacingDp = viewModel::setOverlayVerticalSpacingDp,
+                                    onSetOverlayHideCommandButtons = viewModel::setOverlayHideCommandButtons,
                                     onPickBlank = { openBlankImage.launch(arrayOf("image/*")) },
                                     onPickGetReady = { openGetReadyImage.launch(arrayOf("image/*")) },
                                     onOpenDebug = { settingsSubPage = SettingsSubPage.DEBUG },
@@ -688,9 +780,13 @@ class MainActivity : ComponentActivity() {
                                         } else if (!uriExists(context.contentResolver, video)) {
                                             context.toast("录屏文件不存在，请重新导入")
                                         } else {
+                                            val wasRunning = debugRunning
                                             pauseDebugPlayback()
                                             debugSeekJob = scope.launch {
                                                 seekToTimestamp(video, calibration, targetTimestampMs, warmupFrames = 26)
+                                                if (wasRunning) {
+                                                    startDebugPlayback(video, calibration)
+                                                }
                                             }
                                         }
                                     },
@@ -710,119 +806,7 @@ class MainActivity : ComponentActivity() {
                                                 debugTimestampMs = 0L
                                                 setDebugResult(null)
                                             }
-                                            debugRunning = true
-                                            debugJob = scope.launch {
-                                                val template = loadDebugTemplateBitmap()
-                                                try {
-                                                    if (!ensureDebugPrepared(video)) {
-                                                        context.toast("视频时长异常，无法分析")
-                                                        return@launch
-                                                    }
-                                                    var anchorPosition = debugTimestampMs.coerceIn(0L, debugDurationMs)
-                                                    var anchorRealtime = SystemClock.elapsedRealtime()
-                                                    var anchorSpeed = latestSettings.debugPlaybackSpeed.coerceIn(0.25f, 4f)
-                                                    var lastAnalyzedPosition = debugResult
-                                                        ?.timestampMs
-                                                        ?.coerceIn(0L, debugDurationMs)
-                                                        ?: -1L
-
-                                                    while (debugRunning) {
-                                                        val activeSettings = latestSettings
-                                                        val loopStart = SystemClock.elapsedRealtime()
-                                                        val speed = activeSettings.debugPlaybackSpeed.coerceIn(0.25f, 4f)
-                                                        if (kotlin.math.abs(speed - anchorSpeed) > 0.001f) {
-                                                            val elapsedAtSwitch = loopStart - anchorRealtime
-                                                            anchorPosition = (
-                                                                anchorPosition + (elapsedAtSwitch.toDouble() * anchorSpeed.toDouble()).toLong()
-                                                                ).coerceIn(0L, debugDurationMs)
-                                                            anchorRealtime = loopStart
-                                                            anchorSpeed = speed
-                                                        }
-
-                                                        val elapsedSinceAnchor = loopStart - anchorRealtime
-                                                        val expectedPosition = (
-                                                            anchorPosition + (elapsedSinceAnchor.toDouble() * anchorSpeed.toDouble()).toLong()
-                                                            ).coerceIn(0L, debugDurationMs)
-                                                        debugTimestampMs = expectedPosition
-
-                                                        val step = frameStepMs(activeSettings)
-                                                        val analyzeGap = (step / 2L).coerceAtLeast(80L)
-                                                        val shouldAnalyze =
-                                                            debugResult == null ||
-                                                                expectedPosition >= debugDurationMs ||
-                                                                (expectedPosition - lastAnalyzedPosition) >= analyzeGap
-
-                                                        if (shouldAnalyze) {
-                                                            val warmupMs = (step * 18L).coerceIn(step, 10_000L)
-                                                            val frameResult = withContext(Dispatchers.Default) {
-                                                                debugAnalyzer.replayToTimestamp(
-                                                                    context = context,
-                                                                    videoUri = video,
-                                                                    targetTimestampMs = expectedPosition,
-                                                                    stepMs = step,
-                                                                    settings = activeSettings,
-                                                                    calibrationProfile = calibration,
-                                                                    startTemplate = template,
-                                                                    maxWarmupMs = warmupMs,
-                                                                )
-                                                            }
-                                                            if (frameResult != null) {
-                                                                setDebugResult(frameResult)
-                                                                debugDurationMs = frameResult.durationMs
-                                                                lastAnalyzedPosition = frameResult.timestampMs
-                                                            } else {
-                                                                lastAnalyzedPosition = expectedPosition
-                                                            }
-                                                        }
-
-                                                        if (expectedPosition >= debugDurationMs) {
-                                                            debugRunning = false
-                                                            break
-                                                        }
-
-                                                        val loopCost = SystemClock.elapsedRealtime() - loopStart
-                                                        delay((16L - loopCost).coerceAtLeast(4L))
-                                                    }
-                                                } finally {
-                                                    template?.recycle()
-                                                    debugRunning = false
-                                                    debugJob = null
-                                                }
-                                            }
-                                        }
-                                    },
-                                    onStepForward = {
-                                        val video = debugVideoUri
-                                        val calibration = settings.calibrationProfile
-                                        if (video == null || calibration == null) {
-                                            context.toast("请先选择录屏并完成节点标定")
-                                        } else if (!uriExists(context.contentResolver, video)) {
-                                            context.toast("录屏文件不存在，请重新导入")
-                                        } else {
-                                            pauseDebugPlayback()
-                                            debugSeekJob = scope.launch {
-                                                val target = if (debugResult == null) {
-                                                    0L
-                                                } else {
-                                                    (debugTimestampMs + 1000L).coerceAtMost(debugDurationMs)
-                                                }
-                                                seekToTimestamp(video, calibration, target, warmupFrames = 34)
-                                            }
-                                        }
-                                    },
-                                    onStepBackward = {
-                                        val video = debugVideoUri
-                                        val calibration = settings.calibrationProfile
-                                        if (video == null || calibration == null) {
-                                            context.toast("请先选择录屏并完成节点标定")
-                                        } else if (!uriExists(context.contentResolver, video)) {
-                                            context.toast("录屏文件不存在，请重新导入")
-                                        } else {
-                                            pauseDebugPlayback()
-                                            debugSeekJob = scope.launch {
-                                                val target = (debugTimestampMs - 1000L).coerceAtLeast(0L)
-                                                seekToTimestamp(video, calibration, target, warmupFrames = 34)
-                                            }
+                                            startDebugPlayback(video, calibration)
                                         }
                                     },
                                 )
@@ -998,6 +982,7 @@ private fun SettingsPage(
     onSetRecognitionMode: (RecognitionMode) -> Unit,
     onSetUseAccessibilityScreenshotCapture: (Boolean) -> Unit,
     onSetAutoGrantAccessibilityViaShizukuOnLaunch: (Boolean) -> Unit,
+    onSetInputEnabled: (Boolean) -> Unit,
     onSetIdleFrameInterval: (Long) -> Unit,
     onSetNonIdleFrameInterval: (Long) -> Unit,
     onSetEdgeThreshold: (Float) -> Unit,
@@ -1026,6 +1011,10 @@ private fun SettingsPage(
     onSetDoneButtonYPercent: (Float) -> Unit,
     onSetOverlayXRatio: (Float) -> Unit,
     onSetOverlayYRatio: (Float) -> Unit,
+    onSetOverlayScaleFactor: (Float) -> Unit,
+    onSetOverlayGlyphSizeDp: (Float) -> Unit,
+    onSetOverlayVerticalSpacingDp: (Float) -> Unit,
+    onSetOverlayHideCommandButtons: (Boolean) -> Unit,
     onPickBlank: () -> Unit,
     onPickGetReady: () -> Unit,
     onOpenDebug: () -> Unit,
@@ -1077,10 +1066,18 @@ private fun SettingsPage(
                     onCheckedChange = onSetAutoGrantAccessibilityViaShizukuOnLaunch,
                 )
 
+                SettingSwitch(
+                    label = "启用输入",
+                    checked = runtime.inputEnabled,
+                    description = "关闭后仅观察识别结果，不执行任何画图、点击操作。",
+                    onCheckedChange = onSetInputEnabled,
+                )
+
                 SettingSlider(
                     label = "闲0采样间隔 ${settings.idleFrameIntervalMs}ms",
                     value = settings.idleFrameIntervalMs.toFloat(),
                     valueRange = 120f..1000f,
+                    snapStep = 1f,
                     description = "仅在闲0（IDLE）阶段使用，默认500ms。",
                 ) {
                     onSetIdleFrameInterval(it.toLong())
@@ -1089,6 +1086,7 @@ private fun SettingsPage(
                     label = "非闲0采样间隔 ${settings.nonIdleFrameIntervalMs}ms",
                     value = settings.nonIdleFrameIntervalMs.toFloat(),
                     valueRange = 30f..1000f,
+                    snapStep = 1f,
                     description = "在令/识/备/绘阶段统一使用，默认120ms。",
                 ) {
                     onSetNonIdleFrameInterval(it.toLong())
@@ -1132,6 +1130,7 @@ private fun SettingsPage(
                     label = "节点Patch匹配边长 ${settings.nodePatchSize}px",
                     value = settings.nodePatchSize.toFloat(),
                     valueRange = 0f..60f,
+                    snapStep = 1f,
                     description = "亮度通过后，对11个节点周围区域逐像素匹配标定帧。0=禁用。需重新标定才能生效。",
                     onChange = { onSetNodePatchSize(it.toInt()) },
                 )
@@ -1157,16 +1156,17 @@ private fun SettingsPage(
                     onChange = onSetGlyphDisplayTopBarsMinLuma,
                 )
                 SettingSlider(
-                    label = "首框亮起阈值 ${settings.goColorDeltaThreshold.format2()}",
+                    label = "触发阈值修正 ${settings.goColorDeltaThreshold.format2()}",
                     value = settings.goColorDeltaThreshold,
-                    valueRange = 1f..60f,
-                    description = "用于 WAIT_GO -> AUTO_DRAW：在 WAIT_GO 阶段首框亮度达到该值且序列非空时触发自动绘制。",
+                    valueRange = 0.5f..30f,
+                    description = "COMMAND_OPEN 末期首框亮度突跃后，再增加该值即触发 AUTO_DRAW。",
                     onChange = onSetGoColorDelta,
                 )
                 SettingSlider(
                     label = "WAIT_GO超时 ${settings.waitGoTimeoutMs / 1000f}s",
                     value = settings.waitGoTimeoutMs.toFloat(),
                     valueRange = 0f..15000f,
+                    snapStep = 100f,
                     description = "WAIT_GO 阶段超过该时长未触发绘制则重置回 IDLE。0=不超时。",
                     onChange = { onSetWaitGoTimeoutMs(it.toLong()) },
                 )
@@ -1188,6 +1188,7 @@ private fun SettingsPage(
                     label = "首框顶端 ${settings.firstBoxTopPercent.format1()}%",
                     value = settings.firstBoxTopPercent,
                     valueRange = 0f..30f,
+                    snapStep = 0.1f,
                     description = "首框检测带顶端占屏幕高度百分比。",
                     onChange = onSetFirstBoxTopPercent,
                 )
@@ -1195,6 +1196,7 @@ private fun SettingsPage(
                     label = "首框底端 ${settings.firstBoxBottomPercent.format1()}%",
                     value = settings.firstBoxBottomPercent,
                     valueRange = 0f..30f,
+                    snapStep = 0.1f,
                     description = "首框检测带底端占屏幕高度百分比。",
                     onChange = onSetFirstBoxBottomPercent,
                 )
@@ -1202,6 +1204,7 @@ private fun SettingsPage(
                     label = "倒计时顶端 ${settings.countdownTopPercent.format1()}%",
                     value = settings.countdownTopPercent,
                     valueRange = 0f..30f,
+                    snapStep = 0.1f,
                     description = "倒计时检测带顶端占屏幕高度百分比。",
                     onChange = onSetCountdownTopPercent,
                 )
@@ -1209,6 +1212,7 @@ private fun SettingsPage(
                     label = "倒计时底端 ${settings.countdownBottomPercent.format1()}%",
                     value = settings.countdownBottomPercent,
                     valueRange = 0f..30f,
+                    snapStep = 0.1f,
                     description = "倒计时检测带底端占屏幕高度百分比。",
                     onChange = onSetCountdownBottomPercent,
                 )
@@ -1216,6 +1220,7 @@ private fun SettingsPage(
                     label = "进度条顶端 ${settings.progressTopPercent.format1()}%",
                     value = settings.progressTopPercent,
                     valueRange = 0f..30f,
+                    snapStep = 0.1f,
                     description = "进度条检测带顶端占屏幕高度百分比（最多30%）。",
                     onChange = onSetProgressTopPercent,
                 )
@@ -1223,6 +1228,7 @@ private fun SettingsPage(
                     label = "进度条底端 ${settings.progressBottomPercent.format1()}%",
                     value = settings.progressBottomPercent,
                     valueRange = 0f..30f,
+                    snapStep = 0.1f,
                     description = "进度条检测带底端占屏幕高度百分比（最多30%）。",
                     onChange = onSetProgressBottomPercent,
                 )
@@ -1232,6 +1238,7 @@ private fun SettingsPage(
                     label = "每边绘制时长 ${settings.drawEdgeDurationMs}ms",
                     value = settings.drawEdgeDurationMs.toFloat(),
                     valueRange = 15f..500f,
+                    snapStep = 1f,
                     description = "自动绘制时每一条线段耗时。",
                 ) {
                     onSetDrawEdgeMs(it.toLong())
@@ -1240,6 +1247,7 @@ private fun SettingsPage(
                     label = "绘制 Glyph 间隔 ${settings.drawGlyphGapMs}ms",
                     value = settings.drawGlyphGapMs.toFloat(),
                     valueRange = 0f..1000f,
+                    snapStep = 1f,
                     description = "相邻 glyph 之间的停顿时长。",
                 ) {
                     onSetDrawGapMs(it.toLong())
@@ -1254,6 +1262,7 @@ private fun SettingsPage(
                     label = "DONE按钮X ${settings.doneButtonXPercent.format1()}%",
                     value = settings.doneButtonXPercent,
                     valueRange = 60f..100f,
+                    snapStep = 0.1f,
                     description = "自动点击右下角 DONE 的横向位置（占屏幕宽度）。",
                     onChange = onSetDoneButtonXPercent,
                 )
@@ -1261,6 +1270,7 @@ private fun SettingsPage(
                     label = "DONE按钮Y ${settings.doneButtonYPercent.format1()}%",
                     value = settings.doneButtonYPercent,
                     valueRange = 90f..100f,
+                    snapStep = 0.1f,
                     description = "自动点击右下角 DONE 的纵向位置（占屏幕高度）。",
                     onChange = onSetDoneButtonYPercent,
                 )
@@ -1270,6 +1280,7 @@ private fun SettingsPage(
                     label = "悬浮窗X ${(settings.overlayXRatio * 100f).format1()}%",
                     value = settings.overlayXRatio * 100f,
                     valueRange = 0f..100f,
+                    snapStep = 0.1f,
                     description = "悬浮窗左上角X位置占屏幕宽度百分比。",
                 ) {
                     onSetOverlayXRatio((it / 100f).coerceIn(0f, 1f))
@@ -1278,10 +1289,41 @@ private fun SettingsPage(
                     label = "悬浮窗Y ${(settings.overlayYRatio * 100f).format1()}%",
                     value = settings.overlayYRatio * 100f,
                     valueRange = 0f..100f,
+                    snapStep = 0.1f,
                     description = "悬浮窗左上角Y位置占屏幕高度百分比。",
                 ) {
                     onSetOverlayYRatio((it / 100f).coerceIn(0f, 1f))
                 }
+                SettingSlider(
+                    label = "悬浮窗缩放 ${settings.overlayScaleFactor.format1()}x",
+                    value = settings.overlayScaleFactor,
+                    valueRange = 0.5f..3.0f,
+                    snapStep = 0.1f,
+                    description = "悬浮窗整体缩放倍率。",
+                    onChange = onSetOverlayScaleFactor,
+                )
+                SettingSlider(
+                    label = "序列图标大小 ${settings.overlayGlyphSizeDp.format1()}dp",
+                    value = settings.overlayGlyphSizeDp,
+                    valueRange = 12f..80f,
+                    snapStep = 0.1f,
+                    description = "悬浮窗底部 glyph 序列每个图标的边长。",
+                    onChange = onSetOverlayGlyphSizeDp,
+                )
+                SettingSlider(
+                    label = "悬浮窗上下间隔 ${settings.overlayVerticalSpacingDp.format1()}dp",
+                    value = settings.overlayVerticalSpacingDp,
+                    valueRange = 0f..40f,
+                    snapStep = 0.1f,
+                    description = "悬浮窗控制面板与序列行之间的间距。",
+                    onChange = onSetOverlayVerticalSpacingDp,
+                )
+                SettingSwitch(
+                    label = "隐藏悬浮窗命令按钮",
+                    checked = settings.overlayHideCommandButtons,
+                    description = "隐藏悬浮窗上的普/中按钮行，功能和配置仍然保留。",
+                    onCheckedChange = onSetOverlayHideCommandButtons,
+                )
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = onPickBlank, enabled = !calibrating) {
@@ -1388,8 +1430,6 @@ private fun SettingsDebugPage(
     onPickVideo: () -> Unit,
     onSeekToTimestamp: (Long) -> Unit,
     onTogglePlayPause: () -> Unit,
-    onStepForward: () -> Unit,
-    onStepBackward: () -> Unit,
 ) {
     var draggingProgress by remember { mutableStateOf(false) }
     var draggingProgressValue by remember { mutableStateOf(0f) }
@@ -1412,15 +1452,12 @@ private fun SettingsDebugPage(
                     Button(onClick = onPickVideo) { Text("导入录屏") }
                     Button(onClick = onTogglePlayPause) { Text(if (debugRunning) "暂停" else "播放") }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = onStepBackward) { Text("后退1s") }
-                    Button(onClick = onStepForward) { Text("前进1s") }
-                }
 
                 SettingSlider(
                     label = "播放倍速 ${settings.debugPlaybackSpeed.format2()}x",
                     value = settings.debugPlaybackSpeed,
                     valueRange = 0.25f..4f,
+                    snapStep = 0.05f,
                     description = "实时生效，越大播放推进越快。",
                     onChange = onSetDebugPlaybackSpeed,
                 )
@@ -1466,7 +1503,7 @@ private fun SettingsDebugPage(
                     )
                     result.snapshot.firstBoxRect?.let { rect ->
                         Text(
-                            text = "首框高度: ${rect.height.format1()}px | 当前亮度 ${result.snapshot.firstBoxLuma.format1()} | 触发阈值 ${settings.goColorDeltaThreshold.format1()}",
+                            text = "首框亮度 ${result.snapshot.firstBoxLuma.format1()} | 基准 ${result.snapshot.firstBoxBaselineLuma.format1()} | 触发 ${(result.snapshot.firstBoxBaselineLuma + settings.goColorDeltaThreshold).format1()}",
                             color = Color(0xFFE8DFFF),
                             fontSize = 12.sp,
                         )
@@ -1478,7 +1515,7 @@ private fun SettingsDebugPage(
                             fontSize = 12.sp,
                         )
                     }
-                    DebugOverlay(result)
+                    DebugOverlay(result, settings)
                 }
             }
         }
@@ -1585,12 +1622,39 @@ private fun SettingSlider(
     value: Float,
     valueRange: ClosedFloatingPointRange<Float>,
     steps: Int = 0,
+    snapStep: Float = 0f,
     description: String? = null,
     onChange: (Float) -> Unit,
 ) {
+    val effectiveSteps = if (snapStep > 0f && steps == 0) {
+        ((valueRange.endInclusive - valueRange.start) / snapStep).toInt() - 1
+    } else {
+        steps
+    }
     Column {
         Text(label, color = Color(0xFFD5F4DA), fontSize = 12.sp)
-        Slider(value = value, onValueChange = onChange, valueRange = valueRange, steps = steps)
+        Slider(
+            value = value,
+            onValueChange = { raw ->
+                if (snapStep > 0f) {
+                    val snapped = (kotlin.math.round(raw / snapStep) * snapStep)
+                        .coerceIn(valueRange.start, valueRange.endInclusive)
+                    onChange(snapped)
+                } else {
+                    onChange(raw)
+                }
+            },
+            valueRange = valueRange,
+            steps = effectiveSteps.coerceAtLeast(0),
+            colors = if (effectiveSteps > 0) {
+                SliderDefaults.colors(
+                    activeTickColor = Color.Transparent,
+                    inactiveTickColor = Color.Transparent,
+                )
+            } else {
+                SliderDefaults.colors()
+            },
+        )
         if (!description.isNullOrBlank()) {
             Text(description, color = Color(0xFF9EB5C0), fontSize = 11.sp)
         }
@@ -1598,12 +1662,13 @@ private fun SettingSlider(
 }
 
 @Composable
-private fun DebugOverlay(result: DebugFrameResult) {
+private fun DebugOverlay(result: DebugFrameResult, settings: moe.lyniko.glyphhacker.data.AppSettings) {
     val frame = result.frame
     val snapshot = result.snapshot
     val nodeMap = snapshot.debugNodes.associateBy { it.index }
-    val autoDrawTrajectory = resolveAutoDrawTrajectory(snapshot)
     val ratio = (frame.width.toFloat() / frame.height.toFloat()).coerceIn(0.3f, 3.5f)
+
+    val drawStartMs = result.drawStartVideoMs
 
     Box(
         modifier = Modifier
@@ -1623,9 +1688,9 @@ private fun DebugOverlay(result: DebugFrameResult) {
             val sx = size.width / frame.width
             val sy = size.height / frame.height
             val activeEdgeColor = if (snapshot.phase == GlyphPhase.AUTO_DRAW) {
-                Color(0x9900E5FF)
+                Color(0x99FF1744)
             } else {
-                Color.Cyan
+                Color.Red
             }
             snapshot.activeEdges.forEach { edge: GlyphEdge ->
                 val start = nodeMap[edge.a] ?: return@forEach
@@ -1637,50 +1702,29 @@ private fun DebugOverlay(result: DebugFrameResult) {
                     strokeWidth = 2.5f.dp.toPx(),
                 )
             }
-            if (autoDrawTrajectory.isNotEmpty()) {
-                val glowWidth = 10.dp.toPx()
-                val strokeWidth = 5.2f.dp.toPx()
-                val markerRadius = 4.4f.dp.toPx()
-                val hueShift = ((result.timestampMs % 1_800L).toFloat() / 1_800f) * 360f
-                autoDrawTrajectory.forEachIndexed { segmentIndex, segment ->
-                    val edgePairs = segment.zipWithNext()
-                    val segmentEdgeCount = edgePairs.size.coerceAtLeast(1)
-                    edgePairs.forEachIndexed { edgeIndex, (startNode, endNode) ->
-                        val progress = edgeIndex / segmentEdgeCount.toFloat()
-                        val baseHue = (hueShift + segmentIndex * 67f + progress * 150f) % 360f
-                        val start = androidx.compose.ui.geometry.Offset(startNode.x * sx, startNode.y * sy)
-                        val end = androidx.compose.ui.geometry.Offset(endNode.x * sx, endNode.y * sy)
-
+            // AUTO_DRAW 阶段：黄色轨迹线 + 黄色圆点表示当前绘制输入位置
+            if (snapshot.phase == GlyphPhase.AUTO_DRAW && drawStartMs >= 0L && snapshot.debugNodes.isNotEmpty()) {
+                val elapsed = result.timestampMs - drawStartMs
+                val state = computeDrawState(
+                    snapshot.sequence, nodeMap, settings.drawEdgeDurationMs, settings.drawGlyphGapMs, elapsed,
+                )
+                if (state != null) {
+                    // 绘制当前 glyph 已走过的轨迹
+                    val trailPoints = state.trail.map { (x, y) ->
+                        androidx.compose.ui.geometry.Offset(x * sx, y * sy)
+                    }
+                    trailPoints.zipWithNext().forEach { (a, b) ->
                         drawLine(
-                            color = Color.White.copy(alpha = 0.32f),
-                            start = start,
-                            end = end,
-                            strokeWidth = glowWidth,
-                            cap = StrokeCap.Round,
-                        )
-                        drawLine(
-                            brush = Brush.linearGradient(
-                                colors = listOf(
-                                    Color.hsv(baseHue, 0.92f, 1f),
-                                    Color.hsv((baseHue + 42f) % 360f, 0.98f, 1f),
-                                    Color.hsv((baseHue + 88f) % 360f, 0.93f, 1f),
-                                ),
-                                start = start,
-                                end = end,
-                            ),
-                            start = start,
-                            end = end,
-                            strokeWidth = strokeWidth,
-                            cap = StrokeCap.Round,
+                            color = Color.Yellow,
+                            start = a,
+                            end = b,
+                            strokeWidth = 5.dp.toPx(),
                         )
                     }
-                    segment.firstOrNull()?.let { startNode ->
-                        drawCircle(
-                            color = Color(0xFFFFFF8A),
-                            radius = markerRadius,
-                            center = androidx.compose.ui.geometry.Offset(startNode.x * sx, startNode.y * sy),
-                        )
-                    }
+                    // 当前输入位置圆点
+                    val center = androidx.compose.ui.geometry.Offset(state.x * sx, state.y * sy)
+                    drawCircle(color = Color.White.copy(alpha = 0.35f), radius = 12.dp.toPx(), center = center)
+                    drawCircle(color = Color.Yellow, radius = 7.dp.toPx(), center = center)
                 }
             }
             snapshot.debugNodes.forEach { node ->
@@ -1720,21 +1764,155 @@ private fun DebugOverlay(result: DebugFrameResult) {
     }
 }
 
-private fun resolveAutoDrawTrajectory(snapshot: GlyphSnapshot): List<List<NodePosition>> {
-    if (snapshot.phase != GlyphPhase.AUTO_DRAW) {
-        return emptyList()
-    }
-    val currentGlyph = snapshot.currentGlyph ?: snapshot.sequence.firstOrNull() ?: return emptyList()
-    val definition = GlyphDictionary.findByName(currentGlyph) ?: return emptyList()
-    if (snapshot.debugNodes.isEmpty()) {
-        return emptyList()
-    }
-    val nodeMap = snapshot.debugNodes.associateBy { it.index }
-    return GlyphPathPlanner.buildStrokeSegments(definition)
-        .mapNotNull { segment ->
-            val points = segment.mapNotNull(nodeMap::get)
-            points.takeIf { it.size >= 2 }
+/**
+ * AUTO_DRAW 阶段的绘制状态：当前输入点坐标 + 当前 glyph 已走过的轨迹。
+ */
+private data class DrawState(
+    val x: Float,
+    val y: Float,
+    /** 当前 glyph 中已经过的路径点（含起点和当前插值点），用于绘制轨迹线。 */
+    val trail: List<Pair<Float, Float>>,
+)
+
+/**
+ * 根据 draw 开始后的经过时间，计算当前绘制输入点和当前 glyph 轨迹。
+ * 时间模型与 [GlyphAccessibilityService.executeDrawCommand] 一致：
+ * 每段 stroke 持续 (nodeCount-1)*edgeDurationMs，段间间隔 glyphGapMs。
+ */
+private fun computeDrawState(
+    sequence: List<String>,
+    nodeMap: Map<Int, NodePosition>,
+    edgeDurationMs: Long,
+    glyphGapMs: Long,
+    elapsedMs: Long,
+): DrawState? {
+    if (elapsedMs < 0L || sequence.isEmpty() || nodeMap.isEmpty()) return null
+
+    var cursor = 0L
+    var lastFinishedTrail: List<Pair<Float, Float>>? = null
+    var lastFinishedPos: Pair<Float, Float>? = null
+    for ((glyphIndex, glyphName) in sequence.withIndex()) {
+        val definition = GlyphDictionary.findByName(glyphName) ?: continue
+        val segments = GlyphPathPlanner.buildStrokeSegments(definition)
+        for ((segIndex, segment) in segments.withIndex()) {
+            val waypoints = buildWaypointsForSegment(segment, nodeMap)
+            if (waypoints.size < 2) continue
+            val edgeCount = (segment.size - 1).coerceAtLeast(1)
+            val strokeDuration = edgeCount * edgeDurationMs
+
+            if (elapsedMs in cursor until cursor + strokeDuration) {
+                val t = (elapsedMs - cursor).toFloat() / strokeDuration.toFloat()
+                val pos = interpolateAlongWaypoints(waypoints, t)
+                val trail = buildWaypointTrail(waypoints, t)
+                return DrawState(pos.first, pos.second, trail)
+            }
+            cursor += strokeDuration
+            // 记住最后完成的段的终点和轨迹
+            lastFinishedPos = waypoints.last()
+            lastFinishedTrail = waypoints.toList()
+
+            val isLastSegOfLastGlyph = glyphIndex == sequence.lastIndex && segIndex == segments.lastIndex
+            if (!isLastSegOfLastGlyph) {
+                if (elapsedMs in cursor until cursor + glyphGapMs) {
+                    // 间隔中：停留在终点，轨迹为整段
+                    val last = waypoints.last()
+                    return DrawState(last.first, last.second, waypoints.toList())
+                }
+                cursor += glyphGapMs
+            }
         }
+    }
+    // 所有 glyph 绘制完毕后，保持最后一段的终点和完整轨迹
+    if (lastFinishedPos != null && lastFinishedTrail != null) {
+        return DrawState(lastFinishedPos.first, lastFinishedPos.second, lastFinishedTrail)
+    }
+    return null
+}
+
+/**
+ * 将一段 stroke（节点索引列表）展开为包含绕行 waypoint 的坐标列表。
+ * 与 [GlyphAccessibilityService.buildGesturePath] 的绕行逻辑保持一致：
+ * - Row 3 (9↔6) 向上绕行
+ * - Row 5 (8↔7) 向下绕行
+ */
+private fun buildWaypointsForSegment(
+    segment: List<Int>,
+    nodeMap: Map<Int, NodePosition>,
+): List<Pair<Float, Float>> {
+    if (segment.isEmpty()) return emptyList()
+    val first = nodeMap[segment.first()] ?: return emptyList()
+    val waypoints = mutableListOf(first.x to first.y)
+    for (i in 1 until segment.size) {
+        val fromIdx = segment[i - 1]
+        val toIdx = segment[i]
+        val fromNode = nodeMap[fromIdx] ?: continue
+        val toNode = nodeMap[toIdx] ?: continue
+        if (isCrowdedHorizontalRowLink(fromIdx, toIdx)) {
+            val goUp = isRow3Link(fromIdx, toIdx)
+            val apexX = (fromNode.x + toNode.x) * 0.5f
+            val baseY = (fromNode.y + toNode.y) * 0.5f
+            val rise = maxOf(
+                kotlin.math.abs(apexX - fromNode.x),
+                kotlin.math.abs(apexX - toNode.x),
+            )
+            val apexY = if (goUp) baseY - rise else baseY + rise
+            waypoints += apexX to apexY
+        }
+        waypoints += toNode.x to toNode.y
+    }
+    return waypoints
+}
+
+private const val ROW3_LEFT_NODE = 9
+private const val ROW3_RIGHT_NODE = 6
+private const val ROW5_LEFT_NODE = 8
+private const val ROW5_RIGHT_NODE = 7
+
+private fun isCrowdedHorizontalRowLink(fromIndex: Int, toIndex: Int): Boolean {
+    return (fromIndex == ROW3_LEFT_NODE && toIndex == ROW3_RIGHT_NODE) ||
+        (fromIndex == ROW3_RIGHT_NODE && toIndex == ROW3_LEFT_NODE) ||
+        (fromIndex == ROW5_LEFT_NODE && toIndex == ROW5_RIGHT_NODE) ||
+        (fromIndex == ROW5_RIGHT_NODE && toIndex == ROW5_LEFT_NODE)
+}
+
+private fun isRow3Link(fromIndex: Int, toIndex: Int): Boolean {
+    return (fromIndex == ROW3_LEFT_NODE && toIndex == ROW3_RIGHT_NODE) ||
+        (fromIndex == ROW3_RIGHT_NODE && toIndex == ROW3_LEFT_NODE)
+}
+
+/**
+ * 沿 waypoint 折线路径按比例 [t] (0..1) 插值，返回 (x, y)。
+ * 注意：t 是基于原始 edge 数量的比例，而 waypoints 可能因绕行而多于 edge+1 个点，
+ * 所以这里按 waypoint 段数均匀分配 t。
+ */
+private fun interpolateAlongWaypoints(waypoints: List<Pair<Float, Float>>, t: Float): Pair<Float, Float> {
+    if (waypoints.size < 2) return waypoints.first()
+    val totalSegs = waypoints.size - 1
+    val rawIndex = t * totalSegs
+    val segIndex = rawIndex.toInt().coerceIn(0, totalSegs - 1)
+    val segT = (rawIndex - segIndex).coerceIn(0f, 1f)
+    val (ax, ay) = waypoints[segIndex]
+    val (bx, by) = waypoints[segIndex + 1]
+    return (ax + (bx - ax) * segT) to (ay + (by - ay) * segT)
+}
+
+/** 构建从起点到当前插值位置的 waypoint 轨迹点列表。 */
+private fun buildWaypointTrail(waypoints: List<Pair<Float, Float>>, t: Float): List<Pair<Float, Float>> {
+    if (waypoints.size < 2) return waypoints.toList()
+    val totalSegs = waypoints.size - 1
+    val rawIndex = t * totalSegs
+    val segIndex = rawIndex.toInt().coerceIn(0, totalSegs - 1)
+    val segT = (rawIndex - segIndex).coerceIn(0f, 1f)
+    val trail = mutableListOf<Pair<Float, Float>>()
+    for (i in 0..segIndex) {
+        trail += waypoints[i]
+    }
+    if (segT > 0.001f) {
+        val (ax, ay) = waypoints[segIndex]
+        val (bx, by) = waypoints[segIndex + 1]
+        trail += (ax + (bx - ax) * segT) to (ay + (by - ay) * segT)
+    }
+    return trail
 }
 
 @Composable
@@ -1778,7 +1956,7 @@ private fun renderCurrentNodesOnBlank(
 
     val canvas = AndroidCanvas(output)
     val edgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = android.graphics.Color.CYAN
+        color = android.graphics.Color.RED
         style = Paint.Style.STROKE
         strokeWidth = output.width.coerceAtMost(output.height) * 0.004f
     }

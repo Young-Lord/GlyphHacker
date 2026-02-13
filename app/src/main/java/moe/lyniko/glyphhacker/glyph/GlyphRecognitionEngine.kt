@@ -24,6 +24,7 @@ class GlyphRecognitionEngine {
         val waitGoSeen: Boolean,
         val glyphDisplayLatched: Boolean,
         val glyphGapFrames: Int,
+        val firstBoxBaselineLuma: Float,
     )
 
     private var phase: GlyphPhase = GlyphPhase.IDLE
@@ -38,6 +39,8 @@ class GlyphRecognitionEngine {
     private var glyphGapFrames: Int = 0
     private var processedFrameCount: Long = 0L
     private var waitGoEnteredAtNs: Long = 0L
+    /** COMMAND_OPEN 末期首框亮度突跃值，作为 go 检测的基准。 */
+    private var firstBoxBaselineLuma: Float = 0f
 
     fun resetSession() {
         phase = GlyphPhase.IDLE
@@ -52,6 +55,7 @@ class GlyphRecognitionEngine {
         glyphGapFrames = 0
         processedFrameCount = 0L
         waitGoEnteredAtNs = 0L
+        firstBoxBaselineLuma = 0f
     }
 
     fun snapshotSessionState(): SessionState {
@@ -66,6 +70,7 @@ class GlyphRecognitionEngine {
             waitGoSeen = waitGoSeen,
             glyphDisplayLatched = glyphDisplayLatched,
             glyphGapFrames = glyphGapFrames,
+            firstBoxBaselineLuma = firstBoxBaselineLuma,
         )
     }
 
@@ -81,6 +86,7 @@ class GlyphRecognitionEngine {
         waitGoSeen = state.waitGoSeen
         glyphDisplayLatched = state.glyphDisplayLatched
         glyphGapFrames = state.glyphGapFrames
+        firstBoxBaselineLuma = state.firstBoxBaselineLuma
     }
 
     fun processFrame(
@@ -203,6 +209,14 @@ class GlyphRecognitionEngine {
         if (commandOpenSeen && glyphDisplayTransitionFrame) {
             glyphDisplaySeen = true
         }
+        // COMMAND_OPEN 末期：首框亮度从 <1 突跃到 >5 时，锁定为 baseline
+        if (commandOpenSeen && firstBoxBaselineLuma == 0f && firstBoxLuma > 5f) {
+            firstBoxBaselineLuma = firstBoxLuma
+            Log.i(
+                LOG_TAG,
+                "[ENGINE][F$frameId] firstBox baseline latched=$firstBoxBaselineLuma",
+            )
+        }
         if (!previousCommandOpenSeen && commandOpenSeen) {
             Log.i(
                 LOG_TAG,
@@ -258,7 +272,7 @@ class GlyphRecognitionEngine {
                 debugFrameHeight = bitmap.height,
                 firstBoxRect = firstBoxRect,
                 firstBoxLuma = firstBoxLuma,
-                firstBoxBaselineLuma = 0f,
+                firstBoxBaselineLuma = firstBoxBaselineLuma,
                 countdownRect = countdownRect,
                 countdownLuma = countdownLuma,
                 progressRect = progressRect,
@@ -301,7 +315,7 @@ class GlyphRecognitionEngine {
 
         if (!drawTriggered) {
             if (waitGoSeen && firstBoxRect != null) {
-                if (firstBoxLuma >= settings.goColorDeltaThreshold) {
+                if (firstBoxLuma >= firstBoxBaselineLuma + settings.goColorDeltaThreshold) {
                     if (sequence.isNotEmpty()) {
                         drawRequested = true
                         drawTriggered = true
@@ -332,8 +346,8 @@ class GlyphRecognitionEngine {
 
         val snapshot = GlyphSnapshot(
             phase = phase,
-            currentGlyph = candidateGlyphName,
-            currentConfidence = candidateConfidence,
+            currentGlyph = if (drawTriggered) null else candidateGlyphName,
+            currentConfidence = if (drawTriggered) 0f else candidateConfidence,
             sequence = sequence.toList(),
             activeEdges = activeEdges,
             edgeEvidence = edgeEvidence,
@@ -344,7 +358,7 @@ class GlyphRecognitionEngine {
             debugFrameHeight = bitmap.height,
             firstBoxRect = firstBoxRect,
             firstBoxLuma = firstBoxLuma,
-            firstBoxBaselineLuma = 0f,
+            firstBoxBaselineLuma = firstBoxBaselineLuma,
             countdownRect = countdownRect,
             countdownLuma = countdownLuma,
             progressRect = progressRect,
@@ -460,6 +474,7 @@ class GlyphRecognitionEngine {
         glyphDisplayLatched = false
         glyphGapFrames = 0
         waitGoEnteredAtNs = 0L
+        firstBoxBaselineLuma = 0f
         phase = GlyphPhase.IDLE
         Log.i(
             LOG_TAG,

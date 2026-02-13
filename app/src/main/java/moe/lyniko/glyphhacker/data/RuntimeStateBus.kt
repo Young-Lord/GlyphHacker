@@ -11,6 +11,7 @@ import moe.lyniko.glyphhacker.glyph.ProbeRect
 data class RuntimeState(
     val captureRunning: Boolean = false,
     val recognitionEnabled: Boolean = true,
+    val inputEnabled: Boolean = true,
     val overlayVisible: Boolean = false,
     val phase: GlyphPhase = GlyphPhase.IDLE,
     val currentGlyph: String? = null,
@@ -61,6 +62,7 @@ object RuntimeStateBus {
         _state.value = RuntimeState(
             captureRunning = captureRunning,
             recognitionEnabled = previousState.recognitionEnabled,
+            inputEnabled = previousState.inputEnabled,
             overlayVisible = previousState.overlayVisible,
             phase = snapshot.phase,
             currentGlyph = snapshot.currentGlyph,
@@ -134,6 +136,10 @@ object RuntimeStateBus {
         _state.value = _state.value.copy(overlayVisible = visible, lastUpdatedAtMs = System.currentTimeMillis())
     }
 
+    fun setInputEnabled(enabled: Boolean) {
+        _state.value = _state.value.copy(inputEnabled = enabled, lastUpdatedAtMs = System.currentTimeMillis())
+    }
+
     fun setIdle(captureRunning: Boolean = _state.value.captureRunning) {
         val current = _state.value
         _state.value = current.copy(
@@ -162,9 +168,11 @@ object RuntimeStateBus {
 
     fun reset() {
         val recognitionEnabled = _state.value.recognitionEnabled
+        val inputEnabled = _state.value.inputEnabled
         val overlayVisible = _state.value.overlayVisible
         _state.value = RuntimeState(
             recognitionEnabled = recognitionEnabled,
+            inputEnabled = inputEnabled,
             overlayVisible = overlayVisible,
             lastUpdatedAtMs = System.currentTimeMillis(),
         )
