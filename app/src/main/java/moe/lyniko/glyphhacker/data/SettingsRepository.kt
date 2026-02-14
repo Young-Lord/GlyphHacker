@@ -257,6 +257,11 @@ class SettingsRepository(context: Context) {
         refresh()
     }
 
+    suspend fun updateOverlayOpacityPercent(value: Float) {
+        prefs.edit().putFloat(KEY_OVERLAY_OPACITY_PERCENT, value.coerceIn(0f, 100f)).apply()
+        refresh()
+    }
+
     suspend fun updateOverlayHideCommandButtons(hide: Boolean) {
         prefs.edit().putBoolean(KEY_OVERLAY_HIDE_COMMAND_BUTTONS, hide).apply()
         refresh()
@@ -405,6 +410,7 @@ class SettingsRepository(context: Context) {
             val overlayScaleFactor = config.optDouble("overlayScaleFactor", 1.0).toFloat()
             val overlayGlyphSizeDp = config.optDouble("overlayGlyphSizeDp", 28.0).toFloat()
             val overlayVerticalSpacingDp = config.optDouble("overlayVerticalSpacingDp", 0.0).toFloat()
+            val overlayOpacityPercent = config.optDouble("overlayOpacityPercent", 100.0).toFloat()
             val overlayHideCommandButtons = config.optBoolean("overlayHideCommandButtons", false)
             val inputEnabled = config.optBoolean("inputEnabled", true)
 
@@ -457,6 +463,7 @@ class SettingsRepository(context: Context) {
                 .putFloat(KEY_OVERLAY_SCALE_FACTOR, overlayScaleFactor.coerceIn(0.5f, 3.0f))
                 .putFloat(KEY_OVERLAY_GLYPH_SIZE_DP, overlayGlyphSizeDp.coerceIn(12f, 80f))
                 .putFloat(KEY_OVERLAY_VERTICAL_SPACING_DP, overlayVerticalSpacingDp.coerceIn(0f, 40f))
+                .putFloat(KEY_OVERLAY_OPACITY_PERCENT, overlayOpacityPercent.coerceIn(0f, 100f))
                 .putBoolean(KEY_OVERLAY_HIDE_COMMAND_BUTTONS, overlayHideCommandButtons)
                 .putBoolean(KEY_INPUT_ENABLED, inputEnabled)
                 .apply()
@@ -539,6 +546,7 @@ class SettingsRepository(context: Context) {
             overlayScaleFactor = prefs.getFloat(KEY_OVERLAY_SCALE_FACTOR, 1.0f).coerceIn(0.5f, 3.0f),
             overlayGlyphSizeDp = prefs.getFloat(KEY_OVERLAY_GLYPH_SIZE_DP, 28f).coerceIn(12f, 80f),
             overlayVerticalSpacingDp = prefs.getFloat(KEY_OVERLAY_VERTICAL_SPACING_DP, 0f).coerceIn(0f, 40f),
+            overlayOpacityPercent = prefs.getFloat(KEY_OVERLAY_OPACITY_PERCENT, 100f).coerceIn(0f, 100f),
             overlayHideCommandButtons = prefs.getBoolean(KEY_OVERLAY_HIDE_COMMAND_BUTTONS, false),
             inputEnabled = prefs.getBoolean(KEY_INPUT_ENABLED, true),
         )
@@ -590,6 +598,7 @@ class SettingsRepository(context: Context) {
         const val KEY_OVERLAY_SCALE_FACTOR = "overlay_scale_factor"
         const val KEY_OVERLAY_GLYPH_SIZE_DP = "overlay_glyph_size_dp"
         const val KEY_OVERLAY_VERTICAL_SPACING_DP = "overlay_vertical_spacing_dp"
+        const val KEY_OVERLAY_OPACITY_PERCENT = "overlay_opacity_percent"
         const val KEY_OVERLAY_HIDE_COMMAND_BUTTONS = "overlay_hide_command_buttons"
         const val KEY_INPUT_ENABLED = "input_enabled"
     }
@@ -813,6 +822,7 @@ private fun AppSettings.toJson(): JSONObject {
     json.put("overlayScaleFactor", overlayScaleFactor.toDouble())
     json.put("overlayGlyphSizeDp", overlayGlyphSizeDp.toDouble())
     json.put("overlayVerticalSpacingDp", overlayVerticalSpacingDp.toDouble())
+    json.put("overlayOpacityPercent", overlayOpacityPercent.toDouble())
     json.put("overlayHideCommandButtons", overlayHideCommandButtons)
     json.put("inputEnabled", inputEnabled)
     return json

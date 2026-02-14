@@ -204,6 +204,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { settingsRepository.updateOverlayVerticalSpacingDp(value) }
     }
 
+    fun setOverlayOpacityPercent(value: Float) {
+        viewModelScope.launch { settingsRepository.updateOverlayOpacityPercent(value) }
+    }
+
     fun setOverlayHideCommandButtons(hide: Boolean) {
         viewModelScope.launch { settingsRepository.updateOverlayHideCommandButtons(hide) }
     }

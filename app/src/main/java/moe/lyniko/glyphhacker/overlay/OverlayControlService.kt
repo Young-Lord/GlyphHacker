@@ -259,7 +259,7 @@ class OverlayControlService : Service() {
             LinearLayout.LayoutParams.WRAP_CONTENT,
             LinearLayout.LayoutParams.WRAP_CONTENT,
         ).apply {
-            topMargin = verticalSpacingPx.coerceAtLeast((baseDensity * scale * 2f).toInt())
+            topMargin = verticalSpacingPx.coerceAtLeast(0)
         })
 
         val params = WindowManager.LayoutParams(
@@ -273,6 +273,7 @@ class OverlayControlService : Service() {
             gravity = Gravity.TOP or Gravity.START
             x = (resources.displayMetrics.widthPixels * 0.62f).toInt()
             y = (resources.displayMetrics.heightPixels * 0.07f).toInt()
+            alpha = (settingsRepository.settingsFlow.value.overlayOpacityPercent / 100f).coerceIn(0f, 1f)
         }
 
         wm.addView(root, params)
@@ -482,7 +483,7 @@ class OverlayControlService : Service() {
                 val verticalSpacingPx = (settings.overlayVerticalSpacingDp * baseDensity * scale).toInt()
                 glyphSequenceView?.let { seqView ->
                     val lp = seqView.layoutParams as? LinearLayout.LayoutParams
-                    lp?.topMargin = verticalSpacingPx.coerceAtLeast((baseDensity * scale * 2f).toInt())
+                    lp?.topMargin = verticalSpacingPx.coerceAtLeast(0)
                     seqView.layoutParams = lp
                 }
 
@@ -491,6 +492,7 @@ class OverlayControlService : Service() {
 
                 params.x = (settings.overlayXRatio * width).toInt().coerceIn(0, width)
                 params.y = (settings.overlayYRatio * height).toInt().coerceIn(0, height)
+                params.alpha = (settings.overlayOpacityPercent / 100f).coerceIn(0f, 1f)
                 wm.updateViewLayout(root, params)
             }
         }

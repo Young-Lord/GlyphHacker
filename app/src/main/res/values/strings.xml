@@ -16,6 +16,7 @@
 
     <string name="status_running">运行中</string>
     <string name="status_stopped">已停止</string>
+    <string name="qs_tile_label">Glyph Hacker</string>
     <string name="error_projection_permission_missing">未找到录屏授权，请回到应用先授权</string>
 
     <string name="accessibility_service_description">用于在识别完成后自动绘制 Glyph</string>

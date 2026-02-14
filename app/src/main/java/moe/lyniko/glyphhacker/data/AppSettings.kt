@@ -12,10 +12,10 @@ enum class CommandOpenPrimaryAction(
     val label: String,
     val glyphName: String?,
 ) {
-    MORE_DISABLED("多", null),
-    SEND_MORE("勿", "More"),
-    SEND_LESS("仅", "Less"),
-    SEND_SPEED("普", "Speed"),
+    MORE_DISABLED("普", null),
+    SEND_MORE("多", "More"),
+    SEND_LESS("勿", "Less"),
+    SEND_SPEED("仅", "Speed"),
     ;
 
     fun next(): CommandOpenPrimaryAction {
@@ -102,6 +102,8 @@ data class AppSettings(
     val overlayGlyphSizeDp: Float = 28f,
     /** 悬浮窗上下行间距（dp），默认 0。 */
     val overlayVerticalSpacingDp: Float = 0f,
+    /** 悬浮窗不透明度百分比（0 = 全透明，100 = 完全不透明）。 */
+    val overlayOpacityPercent: Float = 100f,
     /** 是否隐藏悬浮窗上的 普/中 按钮行。 */
     val overlayHideCommandButtons: Boolean = false,
     /** 是否启用输入（手势注入）。 */

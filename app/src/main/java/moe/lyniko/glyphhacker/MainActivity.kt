@@ -680,7 +680,11 @@ class MainActivity : ComponentActivity() {
                                     if (canUseAccessibilityScreenshotCapture()) {
                                         startAccessibilityScreenshotCaptureInternal()
                                     } else {
-                                        requestProjectionFor(ProjectionGrantAction.START_CAPTURE)
+                                        if (runtime.captureRunning) {
+                                            RuntimeStateBus.setRecognitionEnabled(true)
+                                        } else {
+                                            requestProjectionFor(ProjectionGrantAction.START_CAPTURE)
+                                        }
                                     }
                                 }
                             },
@@ -690,7 +694,12 @@ class MainActivity : ComponentActivity() {
                                         startOverlayInternal()
                                     }
                                 } else {
-                                    requestProjectionFor(ProjectionGrantAction.QUICK_START)
+                                    if (runtime.captureRunning) {
+                                        RuntimeStateBus.setRecognitionEnabled(true)
+                                        startOverlayInternal()
+                                    } else {
+                                        requestProjectionFor(ProjectionGrantAction.QUICK_START)
+                                    }
                                 }
                             },
                         )
@@ -741,6 +750,7 @@ class MainActivity : ComponentActivity() {
                                     onSetOverlayScaleFactor = viewModel::setOverlayScaleFactor,
                                     onSetOverlayGlyphSizeDp = viewModel::setOverlayGlyphSizeDp,
                                     onSetOverlayVerticalSpacingDp = viewModel::setOverlayVerticalSpacingDp,
+                                    onSetOverlayOpacityPercent = viewModel::setOverlayOpacityPercent,
                                     onSetOverlayHideCommandButtons = viewModel::setOverlayHideCommandButtons,
                                     onPickBlank = { openBlankImage.launch(arrayOf("image/*")) },
                                     onPickGetReady = { openGetReadyImage.launch(arrayOf("image/*")) },
@@ -1014,6 +1024,7 @@ private fun SettingsPage(
     onSetOverlayScaleFactor: (Float) -> Unit,
     onSetOverlayGlyphSizeDp: (Float) -> Unit,
     onSetOverlayVerticalSpacingDp: (Float) -> Unit,
+    onSetOverlayOpacityPercent: (Float) -> Unit,
     onSetOverlayHideCommandButtons: (Boolean) -> Unit,
     onPickBlank: () -> Unit,
     onPickGetReady: () -> Unit,
@@ -1317,6 +1328,14 @@ private fun SettingsPage(
                     snapStep = 0.1f,
                     description = "悬浮窗控制面板与序列行之间的间距。",
                     onChange = onSetOverlayVerticalSpacingDp,
+                )
+                SettingSlider(
+                    label = "悬浮窗不透明度 ${settings.overlayOpacityPercent.format1()}%",
+                    value = settings.overlayOpacityPercent,
+                    valueRange = 0f..100f,
+                    snapStep = 0.1f,
+                    description = "0%=全透明，100%=完全不透明。",
+                    onChange = onSetOverlayOpacityPercent,
                 )
                 SettingSwitch(
                     label = "隐藏悬浮窗命令按钮",
