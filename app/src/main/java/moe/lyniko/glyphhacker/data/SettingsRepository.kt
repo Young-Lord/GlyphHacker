@@ -192,6 +192,11 @@ class SettingsRepository(context: Context) {
         refresh()
     }
 
+    suspend fun updateAutoTapDoneAfterInput(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_AUTO_TAP_DONE_AFTER_INPUT, enabled).apply()
+        refresh()
+    }
+
     suspend fun updateOverlayXRatio(value: Float) {
         prefs.edit().putFloat(KEY_OVERLAY_X_RATIO, value.coerceIn(0f, 1f)).apply()
         refresh()
@@ -373,6 +378,7 @@ class SettingsRepository(context: Context) {
             }
             val doneButtonXPercent = config.optDouble("doneButtonXPercent", 75.56).toFloat()
             val doneButtonYPercent = config.optDouble("doneButtonYPercent", 92.29).toFloat()
+            val autoTapDoneAfterInput = config.optBoolean("autoTapDoneAfterInput", true)
             val overlayXRatio = config.optDouble("overlayXRatio", 0.62).toFloat()
             val overlayYRatio = config.optDouble("overlayYRatio", 0.07).toFloat()
             val blankUri = config.optNullableString("blankReferenceUri")
@@ -450,6 +456,7 @@ class SettingsRepository(context: Context) {
                 .putBoolean(KEY_COMMAND_OPEN_HIDE_SLOW_OPTION, commandOpenHideSlowOption)
                 .putFloat(KEY_DONE_BUTTON_X_PERCENT, doneButtonXPercent.coerceIn(60f, 100f))
                 .putFloat(KEY_DONE_BUTTON_Y_PERCENT, doneButtonYPercent.coerceIn(90f, 100f))
+                .putBoolean(KEY_AUTO_TAP_DONE_AFTER_INPUT, autoTapDoneAfterInput)
                 .putFloat(KEY_OVERLAY_X_RATIO, overlayXRatio.coerceIn(0f, 1f))
                 .putFloat(KEY_OVERLAY_Y_RATIO, overlayYRatio.coerceIn(0f, 1f))
                 .putNullableString(KEY_BLANK_URI, blankUri)
@@ -533,6 +540,7 @@ class SettingsRepository(context: Context) {
             commandOpenHideSlowOption = commandOpenHideSlowOption,
             doneButtonXPercent = prefs.getFloat(KEY_DONE_BUTTON_X_PERCENT, 75.56f).coerceIn(60f, 100f),
             doneButtonYPercent = prefs.getFloat(KEY_DONE_BUTTON_Y_PERCENT, 92.29f).coerceIn(90f, 100f),
+            autoTapDoneAfterInput = prefs.getBoolean(KEY_AUTO_TAP_DONE_AFTER_INPUT, true),
             overlayXRatio = prefs.getFloat(KEY_OVERLAY_X_RATIO, 0.62f),
             overlayYRatio = prefs.getFloat(KEY_OVERLAY_Y_RATIO, 0.07f),
             blankReferenceUri = prefs.getString(KEY_BLANK_URI, null),
@@ -585,6 +593,7 @@ class SettingsRepository(context: Context) {
         const val KEY_COMMAND_OPEN_HIDE_SLOW_OPTION = "command_open_hide_slow_option"
         const val KEY_DONE_BUTTON_X_PERCENT = "done_button_x_percent"
         const val KEY_DONE_BUTTON_Y_PERCENT = "done_button_y_percent"
+        const val KEY_AUTO_TAP_DONE_AFTER_INPUT = "auto_tap_done_after_input"
         const val KEY_OVERLAY_X_RATIO = "overlay_x_ratio"
         const val KEY_OVERLAY_Y_RATIO = "overlay_y_ratio"
         const val KEY_BLANK_URI = "blank_reference_uri"
@@ -805,6 +814,7 @@ private fun AppSettings.toJson(): JSONObject {
     json.put("commandOpenHideSlowOption", commandOpenHideSlowOption)
     json.put("doneButtonXPercent", doneButtonXPercent.toDouble())
     json.put("doneButtonYPercent", doneButtonYPercent.toDouble())
+    json.put("autoTapDoneAfterInput", autoTapDoneAfterInput)
     json.put("overlayXRatio", overlayXRatio.toDouble())
     json.put("overlayYRatio", overlayYRatio.toDouble())
     json.put("blankReferenceUri", blankReferenceUri)

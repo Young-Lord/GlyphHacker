@@ -83,6 +83,7 @@ data class AppSettings(
     val commandOpenHideSlowOption: Boolean = false,
     val doneButtonXPercent: Float = 75.56f,
     val doneButtonYPercent: Float = 92.29f,
+    val autoTapDoneAfterInput: Boolean = true,
     val overlayXRatio: Float = 0.62f,
     val overlayYRatio: Float = 0.07f,
     val blankReferenceUri: String? = null,

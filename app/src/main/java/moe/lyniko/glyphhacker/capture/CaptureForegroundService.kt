@@ -660,7 +660,7 @@ class CaptureForegroundService : Service() {
                 DrawCommand(
                     recognitionMode = settings.recognitionMode,
                     glyphNames = snapshot.sequence,
-                    tapDoneButtonAfterDraw = true,
+                    tapDoneButtonAfterDraw = settings.autoTapDoneAfterInput,
                     isCommandOpenPreset = false,
                     calibrationProfile = profile,
                     frameWidth = frame.width,

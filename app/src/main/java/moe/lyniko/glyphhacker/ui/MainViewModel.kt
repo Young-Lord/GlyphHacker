@@ -184,6 +184,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { settingsRepository.updateDoneButtonYPercent(value) }
     }
 
+    fun setAutoTapDoneAfterInput(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.updateAutoTapDoneAfterInput(enabled) }
+    }
+
     fun setOverlayXRatio(value: Float) {
         viewModelScope.launch { settingsRepository.updateOverlayXRatio(value) }
     }

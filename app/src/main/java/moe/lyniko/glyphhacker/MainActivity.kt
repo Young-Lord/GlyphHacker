@@ -179,7 +179,7 @@ class MainActivity : ComponentActivity() {
                 val snackbarHostState = remember { SnackbarHostState() }
 
                 var currentTab by rememberSaveable { mutableStateOf(RootTab.MAIN) }
-                var settingsSubPage by rememberSaveable { mutableStateOf(SettingsSubPage.GENERAL) }
+                var settingsSubPage by rememberSaveable { mutableStateOf(SettingsSubPage.HOME) }
 
                 var debugVideoUri by remember { mutableStateOf<Uri?>(null) }
                 var debugResult by remember { mutableStateOf<DebugFrameResult?>(null) }
@@ -188,6 +188,7 @@ class MainActivity : ComponentActivity() {
                 var debugSeekJob by remember { mutableStateOf<Job?>(null) }
                 var debugDurationMs by remember { mutableStateOf(0L) }
                 var debugTimestampMs by remember { mutableStateOf(0L) }
+                var debugPlaybackSpeed by remember { mutableStateOf(1.0f) }
                 var debugPreparedVideoKey by remember { mutableStateOf<String?>(null) }
                 var nodePreviewBitmap by remember { mutableStateOf<Bitmap?>(null) }
                 val debugAnalyzer = remember { VideoDebugAnalyzer() }
@@ -500,7 +501,7 @@ class MainActivity : ComponentActivity() {
                             }
                             var anchorPosition = debugTimestampMs.coerceIn(0L, debugDurationMs)
                             var anchorRealtime = SystemClock.elapsedRealtime()
-                            var anchorSpeed = latestSettings.debugPlaybackSpeed.coerceIn(0.25f, 4f)
+                            var anchorSpeed = debugPlaybackSpeed.coerceIn(0.25f, 4f)
                             var lastAnalyzedPosition = debugResult
                                 ?.timestampMs
                                 ?.coerceIn(0L, debugDurationMs)
@@ -509,7 +510,7 @@ class MainActivity : ComponentActivity() {
                             while (debugRunning) {
                                 val activeSettings = latestSettings
                                 val loopStart = SystemClock.elapsedRealtime()
-                                val speed = activeSettings.debugPlaybackSpeed.coerceIn(0.25f, 4f)
+                                val speed = debugPlaybackSpeed.coerceIn(0.25f, 4f)
                                 if (kotlin.math.abs(speed - anchorSpeed) > 0.001f) {
                                     val elapsedAtSwitch = loopStart - anchorRealtime
                                     anchorPosition = (
@@ -580,7 +581,7 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(currentTab) {
                     refreshPermissionState()
                     if (currentTab == RootTab.MAIN) {
-                        settingsSubPage = SettingsSubPage.GENERAL
+                        settingsSubPage = SettingsSubPage.HOME
                     } else {
                         Log.d(LOG_TAG, "[AUTO_A11Y] Enter settings tab, trigger attempt")
                         attemptAutoGrantOnLaunch(force = true)
@@ -623,8 +624,12 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                BackHandler(enabled = currentTab == RootTab.SETTINGS && settingsSubPage == SettingsSubPage.DEBUG) {
-                    settingsSubPage = SettingsSubPage.GENERAL
+                BackHandler(enabled = currentTab == RootTab.SETTINGS && settingsSubPage != SettingsSubPage.HOME) {
+                    settingsSubPage = if (settingsSubPage == SettingsSubPage.DEBUG) {
+                        SettingsSubPage.POSITION_RECOGNITION
+                    } else {
+                        SettingsSubPage.HOME
+                    }
                 }
 
                 Scaffold(
@@ -705,8 +710,31 @@ class MainActivity : ComponentActivity() {
                         )
 
                         RootTab.SETTINGS -> {
-                            if (settingsSubPage == SettingsSubPage.GENERAL) {
-                                SettingsPage(
+                            when (settingsSubPage) {
+                                SettingsSubPage.HOME -> SettingsHomePage(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(innerPadding),
+                                    onOpenScreenRecording = { settingsSubPage = SettingsSubPage.SCREEN_RECORDING },
+                                    onOpenPositionRecognition = { settingsSubPage = SettingsSubPage.POSITION_RECOGNITION },
+                                    onOpenAutoInput = { settingsSubPage = SettingsSubPage.AUTO_INPUT },
+                                    onOpenOverlay = { settingsSubPage = SettingsSubPage.OVERLAY },
+                                )
+
+                                SettingsSubPage.SCREEN_RECORDING -> ScreenRecordingSettingsPage(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(innerPadding),
+                                    settings = settings,
+                                    onBack = { settingsSubPage = SettingsSubPage.HOME },
+                                    onSetRecognitionMode = viewModel::setRecognitionMode,
+                                    onSetUseAccessibilityScreenshotCapture = viewModel::setUseAccessibilityScreenshotCapture,
+                                    onSetAutoGrantAccessibilityViaShizukuOnLaunch = viewModel::setAutoGrantAccessibilityViaShizukuOnLaunch,
+                                    onSetIdleFrameInterval = viewModel::setIdleFrameIntervalMs,
+                                    onSetNonIdleFrameInterval = viewModel::setNonIdleFrameIntervalMs,
+                                )
+
+                                SettingsSubPage.POSITION_RECOGNITION -> PositionRecognitionSettingsPage(
                                     modifier = Modifier
                                         .fillMaxSize()
                                         .padding(innerPadding),
@@ -715,12 +743,7 @@ class MainActivity : ComponentActivity() {
                                     calibrating = calibrating,
                                     nodePreviewBitmap = nodePreviewBitmap,
                                     getReadyPreview = getReadyPreview,
-                                    onSetRecognitionMode = viewModel::setRecognitionMode,
-                                    onSetUseAccessibilityScreenshotCapture = viewModel::setUseAccessibilityScreenshotCapture,
-                                    onSetAutoGrantAccessibilityViaShizukuOnLaunch = viewModel::setAutoGrantAccessibilityViaShizukuOnLaunch,
-                                    onSetInputEnabled = viewModel::setInputEnabled,
-                                    onSetIdleFrameInterval = viewModel::setIdleFrameIntervalMs,
-                                    onSetNonIdleFrameInterval = viewModel::setNonIdleFrameIntervalMs,
+                                    onBack = { settingsSubPage = SettingsSubPage.HOME },
                                     onSetEdgeThreshold = viewModel::setEdgeActivationThreshold,
                                     onSetMinLineBrightness = viewModel::setMinimumLineBrightness,
                                     onSetMinMatchScore = viewModel::setMinimumMatchScore,
@@ -740,21 +763,12 @@ class MainActivity : ComponentActivity() {
                                     onSetCountdownBottomPercent = viewModel::setCountdownBottomPercent,
                                     onSetProgressTopPercent = viewModel::setProgressTopPercent,
                                     onSetProgressBottomPercent = viewModel::setProgressBottomPercent,
-                                    onSetDrawEdgeMs = viewModel::setDrawEdgeDurationMs,
-                                    onSetDrawGapMs = viewModel::setDrawGlyphGapMs,
-                                    onSetCommandOpenHideSlowOption = viewModel::setCommandOpenHideSlowOption,
-                                    onSetDoneButtonXPercent = viewModel::setDoneButtonXPercent,
-                                    onSetDoneButtonYPercent = viewModel::setDoneButtonYPercent,
-                                    onSetOverlayXRatio = viewModel::setOverlayXRatio,
-                                    onSetOverlayYRatio = viewModel::setOverlayYRatio,
-                                    onSetOverlayScaleFactor = viewModel::setOverlayScaleFactor,
-                                    onSetOverlayGlyphSizeDp = viewModel::setOverlayGlyphSizeDp,
-                                    onSetOverlayVerticalSpacingDp = viewModel::setOverlayVerticalSpacingDp,
-                                    onSetOverlayOpacityPercent = viewModel::setOverlayOpacityPercent,
-                                    onSetOverlayHideCommandButtons = viewModel::setOverlayHideCommandButtons,
                                     onPickBlank = { openBlankImage.launch(arrayOf("image/*")) },
                                     onPickGetReady = { openGetReadyImage.launch(arrayOf("image/*")) },
-                                    onOpenDebug = { settingsSubPage = SettingsSubPage.DEBUG },
+                                    onOpenDebug = {
+                                        debugPlaybackSpeed = 1.0f
+                                        settingsSubPage = SettingsSubPage.DEBUG
+                                    },
                                     onClearImportCache = {
                                         viewModel.clearImportedCache()
                                         debugVideoUri = null
@@ -769,18 +783,50 @@ class MainActivity : ComponentActivity() {
                                         importConfigLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
                                     },
                                 )
-                            } else {
-                                SettingsDebugPage(
+
+                                SettingsSubPage.AUTO_INPUT -> AutoInputSettingsPage(
                                     modifier = Modifier
                                         .fillMaxSize()
                                         .padding(innerPadding),
                                     settings = settings,
+                                    runtime = runtime,
+                                    onBack = { settingsSubPage = SettingsSubPage.HOME },
+                                    onSetInputEnabled = viewModel::setInputEnabled,
+                                    onSetDrawEdgeMs = viewModel::setDrawEdgeDurationMs,
+                                    onSetDrawGapMs = viewModel::setDrawGlyphGapMs,
+                                    onSetDoneButtonXPercent = viewModel::setDoneButtonXPercent,
+                                    onSetDoneButtonYPercent = viewModel::setDoneButtonYPercent,
+                                    onSetAutoTapDoneAfterInput = viewModel::setAutoTapDoneAfterInput,
+                                )
+
+                                SettingsSubPage.OVERLAY -> OverlaySettingsPage(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(innerPadding),
+                                    settings = settings,
+                                    onBack = { settingsSubPage = SettingsSubPage.HOME },
+                                    onSetOverlayXRatio = viewModel::setOverlayXRatio,
+                                    onSetOverlayYRatio = viewModel::setOverlayYRatio,
+                                    onSetOverlayScaleFactor = viewModel::setOverlayScaleFactor,
+                                    onSetOverlayGlyphSizeDp = viewModel::setOverlayGlyphSizeDp,
+                                    onSetOverlayVerticalSpacingDp = viewModel::setOverlayVerticalSpacingDp,
+                                    onSetOverlayOpacityPercent = viewModel::setOverlayOpacityPercent,
+                                    onSetCommandOpenHideSlowOption = viewModel::setCommandOpenHideSlowOption,
+                                    onSetOverlayHideCommandButtons = viewModel::setOverlayHideCommandButtons,
+                                )
+
+                                SettingsSubPage.DEBUG -> SettingsDebugPage(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(innerPadding),
+                                    settings = settings,
+                                    debugPlaybackSpeed = debugPlaybackSpeed,
                                     debugResult = debugResult,
                                     debugRunning = debugRunning,
                                     debugTimestampMs = debugTimestampMs,
                                     debugDurationMs = debugDurationMs,
-                                    onBack = { settingsSubPage = SettingsSubPage.GENERAL },
-                                    onSetDebugPlaybackSpeed = viewModel::setDebugPlaybackSpeed,
+                                    onBack = { settingsSubPage = SettingsSubPage.POSITION_RECOGNITION },
+                                    onSetDebugPlaybackSpeed = { value -> debugPlaybackSpeed = value.coerceIn(0.25f, 4f) },
                                     onPickVideo = { openDebugVideo.launch(arrayOf("video/*")) },
                                     onSeekToTimestamp = { targetTimestampMs ->
                                         val video = debugVideoUri
@@ -982,19 +1028,154 @@ private fun MainPage(
 }
 
 @Composable
-private fun SettingsPage(
+private fun SettingsHomePage(
     modifier: Modifier,
-    settings: moe.lyniko.glyphhacker.data.AppSettings,
+    onOpenScreenRecording: () -> Unit,
+    onOpenPositionRecognition: () -> Unit,
+    onOpenAutoInput: () -> Unit,
+    onOpenOverlay: () -> Unit,
+) {
+    Column(
+        modifier = modifier
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("设置", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+
+        Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF162221))) {
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                SettingsCategoryEntry(
+                    title = "屏幕录制",
+                    description = "采样方式、识别模式与采样间隔",
+                    onClick = onOpenScreenRecording,
+                )
+                SettingsCategoryEntry(
+                    title = "定位与识别",
+                    description = "阈值、区域、标定、预览与调试",
+                    onClick = onOpenPositionRecognition,
+                )
+                SettingsCategoryEntry(
+                    title = "自动输入",
+                    description = "输入开关、绘制节奏与 DONE 点击",
+                    onClick = onOpenAutoInput,
+                )
+                SettingsCategoryEntry(
+                    title = "悬浮窗",
+                    description = "位置、缩放、透明度与按钮显隐",
+                    onClick = onOpenOverlay,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsCategoryEntry(
+    title: String,
+    description: String,
+    onClick: () -> Unit,
+) {
+    Button(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Text(title, fontWeight = FontWeight.SemiBold)
+            Text(description, fontSize = 11.sp)
+        }
+    }
+}
+
+@Composable
+private fun SettingsSubPageHeader(
+    title: String,
+    onBack: () -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Button(onClick = onBack) { Text("返回") }
+        Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun ScreenRecordingSettingsPage(
+    modifier: Modifier,
+    settings: AppSettings,
+    onBack: () -> Unit,
+    onSetRecognitionMode: (RecognitionMode) -> Unit,
+    onSetUseAccessibilityScreenshotCapture: (Boolean) -> Unit,
+    onSetAutoGrantAccessibilityViaShizukuOnLaunch: (Boolean) -> Unit,
+    onSetIdleFrameInterval: (Long) -> Unit,
+    onSetNonIdleFrameInterval: (Long) -> Unit,
+) {
+    Column(
+        modifier = modifier
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        SettingsSubPageHeader(title = "屏幕录制", onBack = onBack)
+
+        Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF162221))) {
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("模式", modifier = Modifier.width(100.dp), color = Color(0xFFB6E9BE))
+                    Button(onClick = { onSetRecognitionMode(RecognitionMode.EDGE_SET) }) {
+                        Text(if (settings.recognitionMode == RecognitionMode.EDGE_SET) "边集合(当前)" else "边集合")
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Button(onClick = { onSetRecognitionMode(RecognitionMode.STROKE_SEQUENCE) }) {
+                        Text(if (settings.recognitionMode == RecognitionMode.STROKE_SEQUENCE) "手工序列(预留)" else "手工序列")
+                    }
+                }
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    SettingSwitch(
+                        label = "辅助功能截屏读屏",
+                        checked = settings.useAccessibilityScreenshotCapture,
+                        description = "安卓 11+ 可用。开启后改为辅助功能截图采样，不再使用录屏。",
+                        onCheckedChange = onSetUseAccessibilityScreenshotCapture,
+                    )
+                }
+
+                SettingSwitch(
+                    label = "启动时自动用 Shizuku 开启无障碍",
+                    checked = settings.autoGrantAccessibilityViaShizukuOnLaunch,
+                    description = "应用打开时自动调用 Shizuku 获取 WRITE_SECURE_SETTINGS 并尝试开启本应用无障碍。",
+                    onCheckedChange = onSetAutoGrantAccessibilityViaShizukuOnLaunch,
+                )
+
+                SettingSlider(
+                    label = "闲0采样间隔 ${settings.idleFrameIntervalMs}ms",
+                    value = settings.idleFrameIntervalMs.toFloat(),
+                    valueRange = 120f..5000f,
+                    snapStep = 1f,
+                    description = "仅在闲0（IDLE）阶段使用，默认500ms。",
+                ) {
+                    onSetIdleFrameInterval(it.toLong())
+                }
+
+                SettingSlider(
+                    label = "非闲0采样间隔 ${settings.nonIdleFrameIntervalMs}ms",
+                    value = settings.nonIdleFrameIntervalMs.toFloat(),
+                    valueRange = 30f..1000f,
+                    snapStep = 1f,
+                    description = "在令/识/备/绘阶段统一使用，默认120ms。",
+                ) {
+                    onSetNonIdleFrameInterval(it.toLong())
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PositionRecognitionSettingsPage(
+    modifier: Modifier,
+    settings: AppSettings,
     runtime: RuntimeState,
     calibrating: Boolean,
     nodePreviewBitmap: Bitmap?,
     getReadyPreview: Bitmap?,
-    onSetRecognitionMode: (RecognitionMode) -> Unit,
-    onSetUseAccessibilityScreenshotCapture: (Boolean) -> Unit,
-    onSetAutoGrantAccessibilityViaShizukuOnLaunch: (Boolean) -> Unit,
-    onSetInputEnabled: (Boolean) -> Unit,
-    onSetIdleFrameInterval: (Long) -> Unit,
-    onSetNonIdleFrameInterval: (Long) -> Unit,
+    onBack: () -> Unit,
     onSetEdgeThreshold: (Float) -> Unit,
     onSetMinLineBrightness: (Float) -> Unit,
     onSetMinMatchScore: (Float) -> Unit,
@@ -1014,18 +1195,6 @@ private fun SettingsPage(
     onSetCountdownBottomPercent: (Float) -> Unit,
     onSetProgressTopPercent: (Float) -> Unit,
     onSetProgressBottomPercent: (Float) -> Unit,
-    onSetDrawEdgeMs: (Long) -> Unit,
-    onSetDrawGapMs: (Long) -> Unit,
-    onSetCommandOpenHideSlowOption: (Boolean) -> Unit,
-    onSetDoneButtonXPercent: (Float) -> Unit,
-    onSetDoneButtonYPercent: (Float) -> Unit,
-    onSetOverlayXRatio: (Float) -> Unit,
-    onSetOverlayYRatio: (Float) -> Unit,
-    onSetOverlayScaleFactor: (Float) -> Unit,
-    onSetOverlayGlyphSizeDp: (Float) -> Unit,
-    onSetOverlayVerticalSpacingDp: (Float) -> Unit,
-    onSetOverlayOpacityPercent: (Float) -> Unit,
-    onSetOverlayHideCommandButtons: (Boolean) -> Unit,
     onPickBlank: () -> Unit,
     onPickGetReady: () -> Unit,
     onOpenDebug: () -> Unit,
@@ -1041,7 +1210,7 @@ private fun SettingsPage(
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("识别设置", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        SettingsSubPageHeader(title = "定位与识别", onBack = onBack)
 
         Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF162221))) {
             Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1050,58 +1219,7 @@ private fun SettingsPage(
                     color = Color(0xFFCAEFCF),
                     fontSize = 12.sp,
                 )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("模式", modifier = Modifier.width(100.dp), color = Color(0xFFB6E9BE))
-                    Button(onClick = { onSetRecognitionMode(RecognitionMode.EDGE_SET) }) {
-                        Text(if (settings.recognitionMode == RecognitionMode.EDGE_SET) "边集合(当前)" else "边集合")
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    Button(onClick = { onSetRecognitionMode(RecognitionMode.STROKE_SEQUENCE) }) {
-                        Text(if (settings.recognitionMode == RecognitionMode.STROKE_SEQUENCE) "手工序列(预留)" else "手工序列")
-                    }
-                }
 
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    SettingSwitch(
-                        label = "辅助功能截屏读屏",
-                        checked = settings.useAccessibilityScreenshotCapture,
-                        description = "安卓 11+ 可用。开启后改为辅助功能截图采样，不再使用录屏。可能有更严格的采样间隔限制。",
-                        onCheckedChange = onSetUseAccessibilityScreenshotCapture,
-                    )
-                }
-
-                SettingSwitch(
-                    label = "启动时自动用 Shizuku 开启无障碍",
-                    checked = settings.autoGrantAccessibilityViaShizukuOnLaunch,
-                    description = "应用打开时自动调用 Shizuku 获取 WRITE_SECURE_SETTINGS 并尝试开启本应用无障碍。",
-                    onCheckedChange = onSetAutoGrantAccessibilityViaShizukuOnLaunch,
-                )
-
-                SettingSwitch(
-                    label = "启用输入",
-                    checked = runtime.inputEnabled,
-                    description = "关闭后仅观察识别结果，不执行任何画图、点击操作。",
-                    onCheckedChange = onSetInputEnabled,
-                )
-
-                SettingSlider(
-                    label = "闲0采样间隔 ${settings.idleFrameIntervalMs}ms",
-                    value = settings.idleFrameIntervalMs.toFloat(),
-                    valueRange = 120f..5000f,
-                    snapStep = 1f,
-                    description = "仅在闲0（IDLE）阶段使用，默认500ms。",
-                ) {
-                    onSetIdleFrameInterval(it.toLong())
-                }
-                SettingSlider(
-                    label = "非闲0采样间隔 ${settings.nonIdleFrameIntervalMs}ms",
-                    value = settings.nonIdleFrameIntervalMs.toFloat(),
-                    valueRange = 30f..1000f,
-                    snapStep = 1f,
-                    description = "在令/识/备/绘阶段统一使用，默认120ms。",
-                ) {
-                    onSetNonIdleFrameInterval(it.toLong())
-                }
                 SettingSlider(
                     label = "边激活分差阈值 ${settings.edgeActivationThreshold.format2()}",
                     value = settings.edgeActivationThreshold,
@@ -1245,105 +1363,6 @@ private fun SettingsPage(
                 )
 
                 HorizontalDivider(color = Color(0x2244AA77))
-                SettingSlider(
-                    label = "每边绘制时长 ${settings.drawEdgeDurationMs}ms",
-                    value = settings.drawEdgeDurationMs.toFloat(),
-                    valueRange = 15f..500f,
-                    snapStep = 1f,
-                    description = "自动绘制时每一条线段耗时。",
-                ) {
-                    onSetDrawEdgeMs(it.toLong())
-                }
-                SettingSlider(
-                    label = "绘制 Glyph 间隔 ${settings.drawGlyphGapMs}ms",
-                    value = settings.drawGlyphGapMs.toFloat(),
-                    valueRange = 0f..1000f,
-                    snapStep = 1f,
-                    description = "相邻 glyph 之间的停顿时长。",
-                ) {
-                    onSetDrawGapMs(it.toLong())
-                }
-                SettingSwitch(
-                    label = "隐藏“慢”选项",
-                    checked = settings.commandOpenHideSlowOption,
-                    description = "开启后悬浮窗第二栏只在“快/中”之间循环。",
-                    onCheckedChange = onSetCommandOpenHideSlowOption,
-                )
-                SettingSlider(
-                    label = "DONE按钮X ${settings.doneButtonXPercent.format1()}%",
-                    value = settings.doneButtonXPercent,
-                    valueRange = 60f..100f,
-                    snapStep = 0.1f,
-                    description = "自动点击右下角 DONE 的横向位置（占屏幕宽度）。",
-                    onChange = onSetDoneButtonXPercent,
-                )
-                SettingSlider(
-                    label = "DONE按钮Y ${settings.doneButtonYPercent.format1()}%",
-                    value = settings.doneButtonYPercent,
-                    valueRange = 90f..100f,
-                    snapStep = 0.1f,
-                    description = "自动点击右下角 DONE 的纵向位置（占屏幕高度）。",
-                    onChange = onSetDoneButtonYPercent,
-                )
-
-                HorizontalDivider(color = Color(0x2244AA77))
-                SettingSlider(
-                    label = "悬浮窗X ${(settings.overlayXRatio * 100f).format1()}%",
-                    value = settings.overlayXRatio * 100f,
-                    valueRange = 0f..100f,
-                    snapStep = 0.1f,
-                    description = "悬浮窗左上角X位置占屏幕宽度百分比。",
-                ) {
-                    onSetOverlayXRatio((it / 100f).coerceIn(0f, 1f))
-                }
-                SettingSlider(
-                    label = "悬浮窗Y ${(settings.overlayYRatio * 100f).format1()}%",
-                    value = settings.overlayYRatio * 100f,
-                    valueRange = 0f..100f,
-                    snapStep = 0.1f,
-                    description = "悬浮窗左上角Y位置占屏幕高度百分比。",
-                ) {
-                    onSetOverlayYRatio((it / 100f).coerceIn(0f, 1f))
-                }
-                SettingSlider(
-                    label = "悬浮窗缩放 ${settings.overlayScaleFactor.format1()}x",
-                    value = settings.overlayScaleFactor,
-                    valueRange = 0.5f..3.0f,
-                    snapStep = 0.1f,
-                    description = "悬浮窗整体缩放倍率。",
-                    onChange = onSetOverlayScaleFactor,
-                )
-                SettingSlider(
-                    label = "序列图标大小 ${settings.overlayGlyphSizeDp.format1()}dp",
-                    value = settings.overlayGlyphSizeDp,
-                    valueRange = 12f..80f,
-                    snapStep = 0.1f,
-                    description = "悬浮窗底部 glyph 序列每个图标的边长。",
-                    onChange = onSetOverlayGlyphSizeDp,
-                )
-                SettingSlider(
-                    label = "悬浮窗上下间隔 ${settings.overlayVerticalSpacingDp.format1()}dp",
-                    value = settings.overlayVerticalSpacingDp,
-                    valueRange = 0f..40f,
-                    snapStep = 0.1f,
-                    description = "悬浮窗控制面板与序列行之间的间距。",
-                    onChange = onSetOverlayVerticalSpacingDp,
-                )
-                SettingSlider(
-                    label = "悬浮窗不透明度 ${settings.overlayOpacityPercent.format1()}%",
-                    value = settings.overlayOpacityPercent,
-                    valueRange = 0f..100f,
-                    snapStep = 0.1f,
-                    description = "0%=全透明，100%=完全不透明。",
-                    onChange = onSetOverlayOpacityPercent,
-                )
-                SettingSwitch(
-                    label = "隐藏悬浮窗命令按钮",
-                    checked = settings.overlayHideCommandButtons,
-                    description = "隐藏悬浮窗上的普/中按钮行，功能和配置仍然保留。",
-                    onCheckedChange = onSetOverlayHideCommandButtons,
-                )
-
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = onPickBlank, enabled = !calibrating) {
                         Text(if (calibrating) "标定中..." else "导入Command Channel截图(自动标定)")
@@ -1429,10 +1448,175 @@ private fun SettingsPage(
                         }
                     }
                 }
+
+                Button(onClick = onOpenDebug) { Text("进入调试子页面") }
             }
         }
+    }
+}
 
-        Button(onClick = onOpenDebug) { Text("进入调试子页面") }
+@Composable
+private fun AutoInputSettingsPage(
+    modifier: Modifier,
+    settings: AppSettings,
+    runtime: RuntimeState,
+    onBack: () -> Unit,
+    onSetInputEnabled: (Boolean) -> Unit,
+    onSetDrawEdgeMs: (Long) -> Unit,
+    onSetDrawGapMs: (Long) -> Unit,
+    onSetDoneButtonXPercent: (Float) -> Unit,
+    onSetDoneButtonYPercent: (Float) -> Unit,
+    onSetAutoTapDoneAfterInput: (Boolean) -> Unit,
+) {
+    Column(
+        modifier = modifier
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        SettingsSubPageHeader(title = "自动输入", onBack = onBack)
+
+        Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF162221))) {
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                SettingSwitch(
+                    label = "启用输入",
+                    checked = runtime.inputEnabled,
+                    description = "关闭后仅观察识别结果，不执行任何画图、点击操作。",
+                    onCheckedChange = onSetInputEnabled,
+                )
+                SettingSlider(
+                    label = "每边绘制时长 ${settings.drawEdgeDurationMs}ms",
+                    value = settings.drawEdgeDurationMs.toFloat(),
+                    valueRange = 15f..500f,
+                    snapStep = 1f,
+                    description = "自动绘制时每一条线段耗时。",
+                ) {
+                    onSetDrawEdgeMs(it.toLong())
+                }
+                SettingSlider(
+                    label = "绘制 Glyph 间隔 ${settings.drawGlyphGapMs}ms",
+                    value = settings.drawGlyphGapMs.toFloat(),
+                    valueRange = 0f..1000f,
+                    snapStep = 1f,
+                    description = "相邻 glyph 之间的停顿时长。",
+                ) {
+                    onSetDrawGapMs(it.toLong())
+                }
+                SettingSwitch(
+                    label = "输入后自动点击 DONE",
+                    checked = settings.autoTapDoneAfterInput,
+                    description = "关闭后只自动绘制，不自动点右下角 DONE，可手动确认发送。",
+                    onCheckedChange = onSetAutoTapDoneAfterInput,
+                )
+                SettingSlider(
+                    label = "DONE按钮X ${settings.doneButtonXPercent.format1()}%",
+                    value = settings.doneButtonXPercent,
+                    valueRange = 60f..100f,
+                    snapStep = 0.1f,
+                    description = "自动点击右下角 DONE 的横向位置（占屏幕宽度）。",
+                    onChange = onSetDoneButtonXPercent,
+                )
+                SettingSlider(
+                    label = "DONE按钮Y ${settings.doneButtonYPercent.format1()}%",
+                    value = settings.doneButtonYPercent,
+                    valueRange = 90f..100f,
+                    snapStep = 0.1f,
+                    description = "自动点击右下角 DONE 的纵向位置（占屏幕高度）。",
+                    onChange = onSetDoneButtonYPercent,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun OverlaySettingsPage(
+    modifier: Modifier,
+    settings: AppSettings,
+    onBack: () -> Unit,
+    onSetOverlayXRatio: (Float) -> Unit,
+    onSetOverlayYRatio: (Float) -> Unit,
+    onSetOverlayScaleFactor: (Float) -> Unit,
+    onSetOverlayGlyphSizeDp: (Float) -> Unit,
+    onSetOverlayVerticalSpacingDp: (Float) -> Unit,
+    onSetOverlayOpacityPercent: (Float) -> Unit,
+    onSetCommandOpenHideSlowOption: (Boolean) -> Unit,
+    onSetOverlayHideCommandButtons: (Boolean) -> Unit,
+) {
+    Column(
+        modifier = modifier
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        SettingsSubPageHeader(title = "悬浮窗", onBack = onBack)
+
+        Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF162221))) {
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                SettingSlider(
+                    label = "悬浮窗X ${(settings.overlayXRatio * 100f).format1()}%",
+                    value = settings.overlayXRatio * 100f,
+                    valueRange = 0f..100f,
+                    snapStep = 0.1f,
+                    description = "悬浮窗左上角X位置占屏幕宽度百分比。",
+                ) {
+                    onSetOverlayXRatio((it / 100f).coerceIn(0f, 1f))
+                }
+                SettingSlider(
+                    label = "悬浮窗Y ${(settings.overlayYRatio * 100f).format1()}%",
+                    value = settings.overlayYRatio * 100f,
+                    valueRange = 0f..100f,
+                    snapStep = 0.1f,
+                    description = "悬浮窗左上角Y位置占屏幕高度百分比。",
+                ) {
+                    onSetOverlayYRatio((it / 100f).coerceIn(0f, 1f))
+                }
+                SettingSlider(
+                    label = "悬浮窗缩放 ${settings.overlayScaleFactor.format1()}x",
+                    value = settings.overlayScaleFactor,
+                    valueRange = 0.5f..3.0f,
+                    snapStep = 0.1f,
+                    description = "悬浮窗整体缩放倍率。",
+                    onChange = onSetOverlayScaleFactor,
+                )
+                SettingSlider(
+                    label = "序列图标大小 ${settings.overlayGlyphSizeDp.format1()}dp",
+                    value = settings.overlayGlyphSizeDp,
+                    valueRange = 12f..80f,
+                    snapStep = 0.1f,
+                    description = "悬浮窗底部 glyph 序列每个图标的边长。",
+                    onChange = onSetOverlayGlyphSizeDp,
+                )
+                SettingSlider(
+                    label = "悬浮窗上下间隔 ${settings.overlayVerticalSpacingDp.format1()}dp",
+                    value = settings.overlayVerticalSpacingDp,
+                    valueRange = 0f..40f,
+                    snapStep = 0.1f,
+                    description = "悬浮窗控制面板与序列行之间的间距。",
+                    onChange = onSetOverlayVerticalSpacingDp,
+                )
+                SettingSlider(
+                    label = "悬浮窗不透明度 ${settings.overlayOpacityPercent.format1()}%",
+                    value = settings.overlayOpacityPercent,
+                    valueRange = 0f..100f,
+                    snapStep = 0.1f,
+                    description = "0%=全透明，100%=完全不透明。",
+                    onChange = onSetOverlayOpacityPercent,
+                )
+                SettingSwitch(
+                    label = "隐藏“慢”选项",
+                    checked = settings.commandOpenHideSlowOption,
+                    description = "开启后悬浮窗第二栏只在“快/中”之间循环。",
+                    onCheckedChange = onSetCommandOpenHideSlowOption,
+                )
+                SettingSwitch(
+                    label = "隐藏悬浮窗命令按钮",
+                    checked = settings.overlayHideCommandButtons,
+                    description = "隐藏悬浮窗上的普/中按钮行，功能和配置仍然保留。",
+                    onCheckedChange = onSetOverlayHideCommandButtons,
+                )
+            }
+        }
     }
 }
 
@@ -1440,6 +1624,7 @@ private fun SettingsPage(
 private fun SettingsDebugPage(
     modifier: Modifier,
     settings: moe.lyniko.glyphhacker.data.AppSettings,
+    debugPlaybackSpeed: Float,
     debugResult: DebugFrameResult?,
     debugRunning: Boolean,
     debugTimestampMs: Long,
@@ -1460,7 +1645,7 @@ private fun SettingsDebugPage(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = onBack) { Text("返回设置") }
+            Button(onClick = onBack) { Text("返回定位与识别") }
             Text("调试子页面", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         }
 
@@ -1473,8 +1658,8 @@ private fun SettingsDebugPage(
                 }
 
                 SettingSlider(
-                    label = "播放倍速 ${settings.debugPlaybackSpeed.format2()}x",
-                    value = settings.debugPlaybackSpeed,
+                    label = "播放倍速 ${debugPlaybackSpeed.format2()}x",
+                    value = debugPlaybackSpeed,
                     valueRange = 0.25f..4f,
                     snapStep = 0.05f,
                     description = "实时生效，越大播放推进越快。",
@@ -2103,7 +2288,11 @@ private enum class RootTab {
 }
 
 private enum class SettingsSubPage {
-    GENERAL,
+    HOME,
+    SCREEN_RECORDING,
+    POSITION_RECOGNITION,
+    AUTO_INPUT,
+    OVERLAY,
     DEBUG,
 }
 
