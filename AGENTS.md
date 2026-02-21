@@ -7,7 +7,7 @@ Android app for glyph recognition using Kotlin and Jetpack Compose.
 - **Language**: Kotlin (100%)
 - **Framework**: Android with Jetpack Compose UI
 - **Build System**: Gradle with Kotlin DSL (`.gradle.kts`)
-- **Min SDK**: 24 (Android 7.0)
+- **Min SDK**: 26 (Android 8.0)
 - **Target SDK**: 36
 - **Java Compatibility**: Java 11 source, requires Java 17 to build
 

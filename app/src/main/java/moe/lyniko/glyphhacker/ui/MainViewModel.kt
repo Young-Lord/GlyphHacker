@@ -164,6 +164,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { settingsRepository.updateDrawGlyphGapMs(value) }
     }
 
+    fun setDrawTerminalDwellMs(value: Long) {
+        viewModelScope.launch { settingsRepository.updateDrawTerminalDwellMs(value) }
+    }
+
     fun setCommandOpenPrimaryAction(value: CommandOpenPrimaryAction) {
         viewModelScope.launch { settingsRepository.updateCommandOpenPrimaryAction(value) }
     }

@@ -16,6 +16,7 @@ data class DrawCommand(
     val frameHeight: Int,
     val edgeDurationMs: Long,
     val glyphGapMs: Long,
+    val terminalDwellMs: Long,
     val doneButtonXPercent: Float,
     val doneButtonYPercent: Float,
     val sourceFrameId: Long = -1L,

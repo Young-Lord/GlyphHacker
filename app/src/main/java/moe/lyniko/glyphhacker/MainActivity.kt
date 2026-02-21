@@ -794,6 +794,7 @@ class MainActivity : ComponentActivity() {
                                     onSetInputEnabled = viewModel::setInputEnabled,
                                     onSetDrawEdgeMs = viewModel::setDrawEdgeDurationMs,
                                     onSetDrawGapMs = viewModel::setDrawGlyphGapMs,
+                                    onSetDrawTerminalDwellMs = viewModel::setDrawTerminalDwellMs,
                                     onSetDoneButtonXPercent = viewModel::setDoneButtonXPercent,
                                     onSetDoneButtonYPercent = viewModel::setDoneButtonYPercent,
                                     onSetAutoTapDoneAfterInput = viewModel::setAutoTapDoneAfterInput,
@@ -1464,6 +1465,7 @@ private fun AutoInputSettingsPage(
     onSetInputEnabled: (Boolean) -> Unit,
     onSetDrawEdgeMs: (Long) -> Unit,
     onSetDrawGapMs: (Long) -> Unit,
+    onSetDrawTerminalDwellMs: (Long) -> Unit,
     onSetDoneButtonXPercent: (Float) -> Unit,
     onSetDoneButtonYPercent: (Float) -> Unit,
     onSetAutoTapDoneAfterInput: (Boolean) -> Unit,
@@ -1501,6 +1503,15 @@ private fun AutoInputSettingsPage(
                     description = "相邻 glyph 之间的停顿时长。",
                 ) {
                     onSetDrawGapMs(it.toLong())
+                }
+                SettingSlider(
+                    label = "末点停留 ${settings.drawTerminalDwellMs}ms",
+                    value = settings.drawTerminalDwellMs.toFloat(),
+                    valueRange = 0f..200f,
+                    snapStep = 1f,
+                    description = "每段末点额外按住时间，用于提高末点采样命中率。",
+                ) {
+                    onSetDrawTerminalDwellMs(it.toLong())
                 }
                 SettingSwitch(
                     label = "输入后自动点击 DONE",
@@ -1910,7 +1921,12 @@ private fun DebugOverlay(result: DebugFrameResult, settings: moe.lyniko.glyphhac
             if (snapshot.phase == GlyphPhase.AUTO_DRAW && drawStartMs >= 0L && snapshot.debugNodes.isNotEmpty()) {
                 val elapsed = result.timestampMs - drawStartMs
                 val state = computeDrawState(
-                    snapshot.sequence, nodeMap, settings.drawEdgeDurationMs, settings.drawGlyphGapMs, elapsed,
+                    snapshot.sequence,
+                    nodeMap,
+                    settings.drawEdgeDurationMs,
+                    settings.drawGlyphGapMs,
+                    settings.drawTerminalDwellMs,
+                    elapsed,
                 )
                 if (state != null) {
                     // 绘制当前 glyph 已走过的轨迹
@@ -1981,13 +1997,14 @@ private data class DrawState(
 /**
  * 根据 draw 开始后的经过时间，计算当前绘制输入点和当前 glyph 轨迹。
  * 时间模型与 [GlyphAccessibilityService.executeDrawCommand] 一致：
- * 每段 stroke 持续 (nodeCount-1)*edgeDurationMs，段间间隔 glyphGapMs。
+ * 每段 stroke 持续 (nodeCount-1)*edgeDurationMs，末点额外停留 terminalDwellMs，段间间隔 glyphGapMs。
  */
 private fun computeDrawState(
     sequence: List<String>,
     nodeMap: Map<Int, NodePosition>,
     edgeDurationMs: Long,
     glyphGapMs: Long,
+    terminalDwellMs: Long,
     elapsedMs: Long,
 ): DrawState? {
     if (elapsedMs < 0L || sequence.isEmpty() || nodeMap.isEmpty()) return null
@@ -2014,6 +2031,14 @@ private fun computeDrawState(
             // 记住最后完成的段的终点和轨迹
             lastFinishedPos = waypoints.last()
             lastFinishedTrail = waypoints.toList()
+
+            if (terminalDwellMs > 0L) {
+                if (elapsedMs in cursor until cursor + terminalDwellMs) {
+                    val last = waypoints.last()
+                    return DrawState(last.first, last.second, waypoints.toList())
+                }
+                cursor += terminalDwellMs
+            }
 
             val isLastSegOfLastGlyph = glyphIndex == sequence.lastIndex && segIndex == segments.lastIndex
             if (!isLastSegOfLastGlyph) {

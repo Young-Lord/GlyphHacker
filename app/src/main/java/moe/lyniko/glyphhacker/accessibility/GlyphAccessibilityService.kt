@@ -183,6 +183,7 @@ class GlyphAccessibilityService : AccessibilityService() {
         val nodeMap = command.calibrationProfile
             .scaledNodes(command.frameWidth, command.frameHeight)
             .associateBy { it.index }
+        val terminalDwellMs = command.terminalDwellMs.coerceAtLeast(0L)
 
         var dispatchedStrokeCount = 0
         var failedStrokeCount = 0
@@ -216,14 +217,14 @@ class GlyphAccessibilityService : AccessibilityService() {
                     )
                     return@forEachIndexed
                 }
-                val path = buildGesturePath(
+                val gesturePath = buildGesturePath(
                     glyphName = glyphName,
                     segment = segment,
                     nodeMap = nodeMap,
                     frameWidth = command.frameWidth,
                     frameHeight = command.frameHeight,
                 )
-                if (path == null) {
+                if (gesturePath == null) {
                     allGlyphsDrawn = false
                     Log.w(
                         LOG_TAG,
@@ -232,13 +233,43 @@ class GlyphAccessibilityService : AccessibilityService() {
                     return@forEachIndexed
                 }
                 val edgeCount = (segment.size - 1).coerceAtLeast(1)
-                val duration = (edgeCount * command.edgeDurationMs).coerceAtLeast(command.edgeDurationMs)
-                val stroke = GestureDescription.StrokeDescription(path, 0L, duration)
-                val gesture = GestureDescription.Builder()
-                    .addStroke(stroke)
-                    .build()
+                val moveDurationMs = (edgeCount * command.edgeDurationMs).coerceAtLeast(command.edgeDurationMs)
                 val strokeStartNs = SystemClock.elapsedRealtimeNanos()
-                val accepted = dispatchGestureAwait(gesture)
+                val accepted = if (terminalDwellMs > 0L) {
+                    val moveStroke = GestureDescription.StrokeDescription(
+                        gesturePath.path,
+                        0L,
+                        moveDurationMs,
+                        true,
+                    )
+                    val moveGesture = GestureDescription.Builder()
+                        .addStroke(moveStroke)
+                        .build()
+                    val moveAccepted = dispatchGestureAwait(moveGesture)
+                    if (!moveAccepted) {
+                        false
+                    } else {
+                        val holdPath = Path().apply {
+                            moveTo(gesturePath.endX, gesturePath.endY)
+                        }
+                        val holdStroke = moveStroke.continueStroke(
+                            holdPath,
+                            0L,
+                            terminalDwellMs,
+                            false,
+                        )
+                        val holdGesture = GestureDescription.Builder()
+                            .addStroke(holdStroke)
+                            .build()
+                        dispatchGestureAwait(holdGesture)
+                    }
+                } else {
+                    val stroke = GestureDescription.StrokeDescription(gesturePath.path, 0L, moveDurationMs)
+                    val gesture = GestureDescription.Builder()
+                        .addStroke(stroke)
+                        .build()
+                    dispatchGestureAwait(gesture)
+                }
                 val strokeElapsedMs = elapsedMs(strokeStartNs)
                 if (accepted) {
                     dispatchedStrokeCount += 1
@@ -248,7 +279,7 @@ class GlyphAccessibilityService : AccessibilityService() {
                 }
                 Log.d(
                     LOG_TAG,
-                    "[DRAW][F${command.sourceFrameId}] glyph=$glyphName segment[$segmentIndex/${segments.lastIndex}] nodes=${segment.size} planned=${duration}ms actual=${strokeElapsedMs}ms result=$accepted",
+                    "[DRAW][F${command.sourceFrameId}] glyph=$glyphName segment[$segmentIndex/${segments.lastIndex}] nodes=${segment.size} planned=${moveDurationMs + terminalDwellMs}ms move=${moveDurationMs}ms dwell=${terminalDwellMs}ms actual=${strokeElapsedMs}ms result=$accepted",
                 )
                 if (command.glyphGapMs > 0) {
                     delay(command.glyphGapMs)
@@ -340,26 +371,38 @@ class GlyphAccessibilityService : AccessibilityService() {
         nodeMap: Map<Int, NodePosition>,
         frameWidth: Int,
         frameHeight: Int,
-    ): Path? {
+    ): GesturePath? {
         val first = nodeMap[segment.first()] ?: return null
         val path = Path().apply {
             moveTo(first.x, first.y)
         }
+        var endNode = first
         for (index in 1 until segment.size) {
             val fromIndex = segment[index - 1]
             val toIndex = segment[index]
             val fromNode = nodeMap[fromIndex] ?: continue
             val toNode = nodeMap[toIndex] ?: continue
-        if (isCrowdedHorizontalRowLink(fromIndex, toIndex)) {
-            appendCrowdedHorizontalRowDetour(path, fromNode, toNode, goUp = isRow3Link(fromIndex, toIndex), frameWidth, frameHeight)
+            if (isCrowdedHorizontalRowLink(fromIndex, toIndex)) {
+                appendCrowdedHorizontalRowDetour(path, fromNode, toNode, goUp = isRow3Link(fromIndex, toIndex), frameWidth, frameHeight)
             } else if (isImperfectDirectLink(glyphName, fromIndex, toIndex)) {
                 appendImperfectDirectLinkDetour(path, toNode, nodeMap, frameWidth, frameHeight)
             } else {
                 path.lineTo(toNode.x, toNode.y)
             }
+            endNode = toNode
         }
-        return path
+        return GesturePath(
+            path = path,
+            endX = endNode.x,
+            endY = endNode.y,
+        )
     }
+
+    private data class GesturePath(
+        val path: Path,
+        val endX: Float,
+        val endY: Float,
+    )
 
     private fun isCrowdedHorizontalRowLink(fromIndex: Int, toIndex: Int): Boolean {
         return (fromIndex == ROW3_LEFT_NODE && toIndex == ROW3_RIGHT_NODE) ||

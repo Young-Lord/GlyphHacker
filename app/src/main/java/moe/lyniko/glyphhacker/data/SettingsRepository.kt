@@ -151,6 +151,11 @@ class SettingsRepository(context: Context) {
         refresh()
     }
 
+    suspend fun updateDrawTerminalDwellMs(value: Long) {
+        prefs.edit().putLong(KEY_DRAW_TERMINAL_DWELL_MS, value.coerceIn(0L, 200L)).apply()
+        refresh()
+    }
+
     suspend fun updateCommandOpenPrimaryAction(value: CommandOpenPrimaryAction) {
         prefs.edit().putString(KEY_COMMAND_OPEN_PRIMARY_ACTION, value.name).apply()
         refresh()
@@ -360,6 +365,7 @@ class SettingsRepository(context: Context) {
             ).toFloat()
             val drawEdgeMs = config.optLong("drawEdgeDurationMs", 250L)
             val drawGapMs = config.optLong("drawGlyphGapMs", 700L)
+            val drawTerminalDwellMs = config.optLong("drawTerminalDwellMs", 80L)
             val commandOpenPrimaryAction = config.optString(
                 "commandOpenPrimaryAction",
                 CommandOpenPrimaryAction.SEND_SPEED.name,
@@ -451,6 +457,7 @@ class SettingsRepository(context: Context) {
                 .putFloat(KEY_PROGRESS_BOTTOM_PERCENT, progressBottomPercent.coerceIn(0f, 30f))
                 .putLong(KEY_DRAW_EDGE_MS, drawEdgeMs.coerceIn(15L, 500L))
                 .putLong(KEY_DRAW_GAP_MS, drawGapMs.coerceIn(0L, 1000L))
+                .putLong(KEY_DRAW_TERMINAL_DWELL_MS, drawTerminalDwellMs.coerceIn(0L, 200L))
                 .putString(KEY_COMMAND_OPEN_PRIMARY_ACTION, commandOpenPrimaryAction.name)
                 .putString(KEY_COMMAND_OPEN_SECONDARY_ACTION, safeCommandOpenSecondaryAction.name)
                 .putBoolean(KEY_COMMAND_OPEN_HIDE_SLOW_OPTION, commandOpenHideSlowOption)
@@ -533,6 +540,7 @@ class SettingsRepository(context: Context) {
             progressBottomPercent = prefs.getFloat(KEY_PROGRESS_BOTTOM_PERCENT, 10.5f).coerceIn(0f, 30f),
             drawEdgeDurationMs = prefs.getLong(KEY_DRAW_EDGE_MS, 250L),
             drawGlyphGapMs = prefs.getLong(KEY_DRAW_GAP_MS, 700L),
+            drawTerminalDwellMs = prefs.getLong(KEY_DRAW_TERMINAL_DWELL_MS, 80L).coerceIn(0L, 200L),
             commandOpenPrimaryAction = prefs
                 .getString(KEY_COMMAND_OPEN_PRIMARY_ACTION, CommandOpenPrimaryAction.SEND_SPEED.name)
                 .toCommandOpenPrimaryAction(),
@@ -588,6 +596,7 @@ class SettingsRepository(context: Context) {
         const val KEY_PROGRESS_BOTTOM_PERCENT = "progress_bottom_percent"
         const val KEY_DRAW_EDGE_MS = "draw_edge_duration_ms"
         const val KEY_DRAW_GAP_MS = "draw_glyph_gap_ms"
+        const val KEY_DRAW_TERMINAL_DWELL_MS = "draw_terminal_dwell_ms"
         const val KEY_COMMAND_OPEN_PRIMARY_ACTION = "command_open_primary_action"
         const val KEY_COMMAND_OPEN_SECONDARY_ACTION = "command_open_secondary_action"
         const val KEY_COMMAND_OPEN_HIDE_SLOW_OPTION = "command_open_hide_slow_option"
@@ -809,6 +818,7 @@ private fun AppSettings.toJson(): JSONObject {
     json.put("progressBottomPercent", progressBottomPercent.toDouble())
     json.put("drawEdgeDurationMs", drawEdgeDurationMs)
     json.put("drawGlyphGapMs", drawGlyphGapMs)
+    json.put("drawTerminalDwellMs", drawTerminalDwellMs)
     json.put("commandOpenPrimaryAction", commandOpenPrimaryAction.name)
     json.put("commandOpenSecondaryAction", commandOpenSecondaryAction.name)
     json.put("commandOpenHideSlowOption", commandOpenHideSlowOption)

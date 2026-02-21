@@ -78,6 +78,7 @@ data class AppSettings(
     val progressBottomPercent: Float = 10.5f,
     val drawEdgeDurationMs: Long = 250L,
     val drawGlyphGapMs: Long = 700L,
+    val drawTerminalDwellMs: Long = 80L,
     val commandOpenPrimaryAction: CommandOpenPrimaryAction = CommandOpenPrimaryAction.SEND_SPEED,
     val commandOpenSecondaryAction: CommandOpenSecondaryAction = CommandOpenSecondaryAction.MEDIUM,
     val commandOpenHideSlowOption: Boolean = false,
