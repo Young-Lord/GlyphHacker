@@ -54,11 +54,15 @@ class OverlayControlService : Service() {
     private var commandOpenPrimaryAction: CommandOpenPrimaryAction = CommandOpenPrimaryAction.SEND_SPEED
     private var commandOpenSecondaryAction: CommandOpenSecondaryAction = CommandOpenSecondaryAction.MEDIUM
     private var commandOpenHideSlowOption: Boolean = false
+    private var overlayShowGlyphSequence: Boolean = true
+    private var overlaySequenceHideDelayAfterAutoDrawMs: Long = 0L
+    private var overlaySequenceHideDelayAfterRecognitionOnlyMs: Long = 15_000L
 
     // Sequence persistence state
     private var previousPhase: GlyphPhase = GlyphPhase.IDLE
     private var persistedSequence: List<String> = emptyList()
     private var sequencePersistedAtMs: Long = 0L
+    private var activeSequencePersistDurationMs: Long = 0L
 
     // Cached scale-dependent base values (at scale=1.0)
     private var baseDensity: Float = 1f
@@ -112,12 +116,21 @@ class OverlayControlService : Service() {
         val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         windowManager = wm
 
+        val overlaySettings = settingsRepository.settingsFlow.value
+        overlayShowGlyphSequence = overlaySettings.overlayShowGlyphSequence
+        overlaySequenceHideDelayAfterAutoDrawMs = secondsToDurationMs(
+            overlaySettings.overlaySequenceHideDelayAfterAutoDrawSec,
+        )
+        overlaySequenceHideDelayAfterRecognitionOnlyMs = secondsToDurationMs(
+            overlaySettings.overlaySequenceHideDelayAfterRecognitionOnlySec,
+        )
+
         baseDensity = resources.displayMetrics.density
-        val scale = settingsRepository.settingsFlow.value.overlayScaleFactor
+        val scale = overlaySettings.overlayScaleFactor
         val density = baseDensity * scale
         val padding = density.times(6f).toInt()
         val toggleMinWidth = density.times(34f).toInt()
-        val verticalSpacingPx = (settingsRepository.settingsFlow.value.overlayVerticalSpacingDp * baseDensity * scale).toInt()
+        val verticalSpacingPx = (overlaySettings.overlayVerticalSpacingDp * baseDensity * scale).toInt()
 
         // Root: vertical LinearLayout, children left-aligned so widths are independent
         val root = LinearLayout(this).apply {
@@ -241,7 +254,7 @@ class OverlayControlService : Service() {
         controlPanel.addView(cmdRow)
 
         // Hide command row if setting is on
-        val hideCommands = settingsRepository.settingsFlow.value.overlayHideCommandButtons
+        val hideCommands = overlaySettings.overlayHideCommandButtons
         cmdRow.visibility = if (hideCommands) View.GONE else View.VISIBLE
 
         // --- Glyph sequence row: separate view with its own background ---
@@ -249,6 +262,7 @@ class OverlayControlService : Service() {
             setOnClickListener {
                 clearPersistedSequence()
             }
+            visibility = if (overlayShowGlyphSequence) View.VISIBLE else View.GONE
         }
 
         root.addView(controlPanel, LinearLayout.LayoutParams(
@@ -273,7 +287,7 @@ class OverlayControlService : Service() {
             gravity = Gravity.TOP or Gravity.START
             x = (resources.displayMetrics.widthPixels * 0.62f).toInt()
             y = (resources.displayMetrics.heightPixels * 0.07f).toInt()
-            alpha = (settingsRepository.settingsFlow.value.overlayOpacityPercent / 100f).coerceIn(0f, 1f)
+            alpha = (overlaySettings.overlayOpacityPercent / 100f).coerceIn(0f, 1f)
         }
 
         wm.addView(root, params)
@@ -311,7 +325,11 @@ class OverlayControlService : Service() {
                 val running = state.captureRunning && state.recognitionEnabled
                 toggleView?.let { applyToggleState(it, running) }
 
-                val displaySequence = resolveDisplaySequence(state.phase, state.sequence)
+                val displaySequence = resolveDisplaySequence(
+                    currentPhase = state.phase,
+                    currentSequence = state.sequence,
+                    inputEnabled = state.inputEnabled,
+                )
                 glyphSequenceView?.updateSequence(displaySequence)
 
                 previousPhase = state.phase
@@ -322,21 +340,19 @@ class OverlayControlService : Service() {
     /**
      * Resolve which glyph sequence to display in the overlay.
      *
-     * When transitioning from AUTO_DRAW to IDLE, persist the last sequence for up to 20s.
-     * Clear persisted sequence when entering COMMAND_OPEN or after 20s timeout.
+     * Auto-draw enabled: use `overlaySequenceHideDelayAfterAutoDrawMs` after AUTO_DRAW -> IDLE.
+     * Auto-draw disabled (input off): use `overlaySequenceHideDelayAfterRecognitionOnlyMs` after recognition -> IDLE.
      */
-    private fun resolveDisplaySequence(currentPhase: GlyphPhase, currentSequence: List<String>): List<String> {
-        if (currentSequence.isNotEmpty()) {
-            if (currentPhase == GlyphPhase.AUTO_DRAW || currentPhase == GlyphPhase.GLYPH_DISPLAY || currentPhase == GlyphPhase.WAIT_GO) {
-                persistedSequence = currentSequence
-                sequencePersistedAtMs = System.currentTimeMillis()
+    private fun resolveDisplaySequence(
+        currentPhase: GlyphPhase,
+        currentSequence: List<String>,
+        inputEnabled: Boolean,
+    ): List<String> {
+        if (!overlayShowGlyphSequence) {
+            if (persistedSequence.isNotEmpty()) {
+                clearPersistedSequence()
             }
-            return currentSequence
-        }
-
-        // Transition from AUTO_DRAW to IDLE: start persisting
-        if (previousPhase == GlyphPhase.AUTO_DRAW && currentPhase == GlyphPhase.IDLE && persistedSequence.isNotEmpty()) {
-            sequencePersistedAtMs = System.currentTimeMillis()
+            return emptyList()
         }
 
         // Entering COMMAND_OPEN: clear persisted sequence (new hack cycle)
@@ -345,10 +361,34 @@ class OverlayControlService : Service() {
             return emptyList()
         }
 
-        // Check if persisted sequence is still valid (within 20s)
+        if (currentSequence.isNotEmpty()) {
+            if (currentPhase == GlyphPhase.AUTO_DRAW || currentPhase == GlyphPhase.GLYPH_DISPLAY || currentPhase == GlyphPhase.WAIT_GO) {
+                persistedSequence = currentSequence
+            }
+            return currentSequence
+        }
+
+        // Transition to IDLE: start persisting with phase-specific timeout.
+        if (currentPhase == GlyphPhase.IDLE && previousPhase != GlyphPhase.IDLE && persistedSequence.isNotEmpty()) {
+            sequencePersistedAtMs = System.currentTimeMillis()
+            activeSequencePersistDurationMs = resolvePersistDurationMs(
+                previousPhase = previousPhase,
+                inputEnabled = inputEnabled,
+            )
+            if (activeSequencePersistDurationMs <= 0L) {
+                clearPersistedSequence()
+                return emptyList()
+            }
+        }
+
+        // Check if persisted sequence is still valid within configured duration.
         if (persistedSequence.isNotEmpty() && currentPhase == GlyphPhase.IDLE) {
+            if (activeSequencePersistDurationMs <= 0L) {
+                clearPersistedSequence()
+                return emptyList()
+            }
             val elapsed = System.currentTimeMillis() - sequencePersistedAtMs
-            if (elapsed < SEQUENCE_PERSIST_DURATION_MS) {
+            if (elapsed < activeSequencePersistDurationMs) {
                 return persistedSequence
             }
             clearPersistedSequence()
@@ -360,7 +400,19 @@ class OverlayControlService : Service() {
     private fun clearPersistedSequence() {
         persistedSequence = emptyList()
         sequencePersistedAtMs = 0L
+        activeSequencePersistDurationMs = 0L
         glyphSequenceView?.updateSequence(emptyList())
+    }
+
+    private fun resolvePersistDurationMs(previousPhase: GlyphPhase, inputEnabled: Boolean): Long {
+        if (!inputEnabled) {
+            return overlaySequenceHideDelayAfterRecognitionOnlyMs
+        }
+        return if (previousPhase == GlyphPhase.AUTO_DRAW) {
+            overlaySequenceHideDelayAfterAutoDrawMs
+        } else {
+            0L
+        }
     }
 
     private fun applyToggleState(view: TextView, running: Boolean) {
@@ -434,6 +486,13 @@ class OverlayControlService : Service() {
                 commandOpenPrimaryAction = settings.commandOpenPrimaryAction
                 commandOpenSecondaryAction = settings.commandOpenSecondaryAction
                 commandOpenHideSlowOption = settings.commandOpenHideSlowOption
+                overlayShowGlyphSequence = settings.overlayShowGlyphSequence
+                overlaySequenceHideDelayAfterAutoDrawMs = secondsToDurationMs(
+                    settings.overlaySequenceHideDelayAfterAutoDrawSec,
+                )
+                overlaySequenceHideDelayAfterRecognitionOnlyMs = secondsToDurationMs(
+                    settings.overlaySequenceHideDelayAfterRecognitionOnlySec,
+                )
                 commandOpenPrimaryView?.let { applyCommandOpenActionState(it, commandOpenPrimaryAction.label) }
                 commandOpenSecondaryView?.let { applyCommandOpenActionState(it, commandOpenSecondaryAction.label) }
 
@@ -477,7 +536,13 @@ class OverlayControlService : Service() {
                 }
 
                 val glyphSizePx = (settings.overlayGlyphSizeDp * baseDensity).toInt()
-                glyphSequenceView?.setGlyphSizePx(glyphSizePx)
+                glyphSequenceView?.apply {
+                    setGlyphSizePx(glyphSizePx)
+                    visibility = if (overlayShowGlyphSequence) View.VISIBLE else View.GONE
+                }
+                if (!overlayShowGlyphSequence) {
+                    clearPersistedSequence()
+                }
 
                 // Update glyph sequence view top margin (vertical spacing)
                 val verticalSpacingPx = (settings.overlayVerticalSpacingDp * baseDensity * scale).toInt()
@@ -496,6 +561,10 @@ class OverlayControlService : Service() {
                 wm.updateViewLayout(root, params)
             }
         }
+    }
+
+    private fun secondsToDurationMs(seconds: Float): Long {
+        return (seconds.coerceIn(0f, 20f) * 1000f).toLong()
     }
 
     private fun phaseCode(phase: GlyphPhase): String {
@@ -524,7 +593,6 @@ class OverlayControlService : Service() {
     companion object {
         private const val CHANNEL_ID = "glyph_overlay"
         private const val OVERLAY_NOTIFICATION_ID = 3202
-        private const val SEQUENCE_PERSIST_DURATION_MS = 20_000L
 
         fun start(context: Context) {
             ContextCompat.startForegroundService(

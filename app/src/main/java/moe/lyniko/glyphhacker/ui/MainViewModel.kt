@@ -62,9 +62,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun setAutoGrantAccessibilityViaShizukuOnLaunch(enabled: Boolean) {
+    fun setAutoGrantAccessibilityViaShizukuOnLaunch(
+        enabled: Boolean,
+        onUpdated: (() -> Unit)? = null,
+    ) {
         viewModelScope.launch {
             settingsRepository.updateAutoGrantAccessibilityViaShizukuOnLaunch(enabled)
+            onUpdated?.invoke()
         }
     }
 
@@ -206,6 +210,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setOverlayGlyphSizeDp(value: Float) {
         viewModelScope.launch { settingsRepository.updateOverlayGlyphSizeDp(value) }
+    }
+
+    fun setOverlayShowGlyphSequence(show: Boolean) {
+        viewModelScope.launch { settingsRepository.updateOverlayShowGlyphSequence(show) }
+    }
+
+    fun setOverlaySequenceHideDelayAfterAutoDrawSec(value: Float) {
+        viewModelScope.launch { settingsRepository.updateOverlaySequenceHideDelayAfterAutoDrawSec(value) }
+    }
+
+    fun setOverlaySequenceHideDelayAfterRecognitionOnlySec(value: Float) {
+        viewModelScope.launch { settingsRepository.updateOverlaySequenceHideDelayAfterRecognitionOnlySec(value) }
     }
 
     fun setOverlayVerticalSpacingDp(value: Float) {

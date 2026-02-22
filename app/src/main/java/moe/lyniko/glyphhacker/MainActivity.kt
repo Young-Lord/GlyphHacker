@@ -5,6 +5,7 @@ import android.app.Activity
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas as AndroidCanvas
 import android.graphics.Paint
@@ -41,6 +42,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -126,6 +128,15 @@ class MainActivity : ComponentActivity() {
         Log.d(LOG_TAG, "[AUTO_A11Y] Received Shizuku binder")
         attemptAutoGrantOnLaunch()
     }
+    private val shizukuPermissionResultListener = Shizuku.OnRequestPermissionResultListener { requestCode, grantResult ->
+        if (
+            ShizukuAccessibilityHelper.isPermissionRequestCode(requestCode) &&
+            grantResult == PackageManager.PERMISSION_GRANTED
+        ) {
+            Log.d(LOG_TAG, "[AUTO_A11Y] Shizuku permission granted, retry auto grant")
+            attemptAutoGrantOnLaunch(ignoreLaunchFinishedGuard = true)
+        }
+    }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
@@ -161,6 +172,7 @@ class MainActivity : ComponentActivity() {
         consumeProjectionActionIntent(intent)
         Log.d(LOG_TAG, "[AUTO_A11Y] onCreate, register binder listener")
         Shizuku.addBinderReceivedListener(shizukuBinderListener)
+        Shizuku.addRequestPermissionResultListener(shizukuPermissionResultListener)
         attemptAutoGrantOnLaunch()
 
         val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
@@ -582,9 +594,6 @@ class MainActivity : ComponentActivity() {
                     refreshPermissionState()
                     if (currentTab == RootTab.MAIN) {
                         settingsSubPage = SettingsSubPage.HOME
-                    } else {
-                        Log.d(LOG_TAG, "[AUTO_A11Y] Enter settings tab, trigger attempt")
-                        attemptAutoGrantOnLaunch(force = true)
                     }
                 }
 
@@ -659,6 +668,8 @@ class MainActivity : ComponentActivity() {
                                 .padding(innerPadding),
                             permissions = permissions,
                             runtime = runtime,
+                            autoInputEnabled = settings.inputEnabled,
+                            accessibilityCaptureEnabled = settings.useAccessibilityScreenshotCapture,
                             overlayVisible = runtime.overlayVisible,
                             recognitionRunning = runtime.captureRunning && runtime.recognitionEnabled,
                             onRequestOverlayPermission = {
@@ -694,16 +705,27 @@ class MainActivity : ComponentActivity() {
                                 }
                             },
                             onQuickStart = {
+                                val shouldStartOverlay = permissions.overlayGranted
                                 if (canUseAccessibilityScreenshotCapture()) {
                                     if (startAccessibilityScreenshotCaptureInternal()) {
-                                        startOverlayInternal()
+                                        if (shouldStartOverlay) {
+                                            startOverlayInternal()
+                                        }
                                     }
                                 } else {
                                     if (runtime.captureRunning) {
                                         RuntimeStateBus.setRecognitionEnabled(true)
-                                        startOverlayInternal()
+                                        if (shouldStartOverlay) {
+                                            startOverlayInternal()
+                                        }
                                     } else {
-                                        requestProjectionFor(ProjectionGrantAction.QUICK_START)
+                                        requestProjectionFor(
+                                            if (shouldStartOverlay) {
+                                                ProjectionGrantAction.QUICK_START
+                                            } else {
+                                                ProjectionGrantAction.START_CAPTURE
+                                            },
+                                        )
                                     }
                                 }
                             },
@@ -729,7 +751,13 @@ class MainActivity : ComponentActivity() {
                                     onBack = { settingsSubPage = SettingsSubPage.HOME },
                                     onSetRecognitionMode = viewModel::setRecognitionMode,
                                     onSetUseAccessibilityScreenshotCapture = viewModel::setUseAccessibilityScreenshotCapture,
-                                    onSetAutoGrantAccessibilityViaShizukuOnLaunch = viewModel::setAutoGrantAccessibilityViaShizukuOnLaunch,
+                                    onSetAutoGrantAccessibilityViaShizukuOnLaunch = { enabled ->
+                                        viewModel.setAutoGrantAccessibilityViaShizukuOnLaunch(enabled) {
+                                            if (enabled) {
+                                                attemptAutoGrantOnLaunch(ignoreLaunchFinishedGuard = true)
+                                            }
+                                        }
+                                    },
                                     onSetIdleFrameInterval = viewModel::setIdleFrameIntervalMs,
                                     onSetNonIdleFrameInterval = viewModel::setNonIdleFrameIntervalMs,
                                 )
@@ -810,6 +838,9 @@ class MainActivity : ComponentActivity() {
                                     onSetOverlayYRatio = viewModel::setOverlayYRatio,
                                     onSetOverlayScaleFactor = viewModel::setOverlayScaleFactor,
                                     onSetOverlayGlyphSizeDp = viewModel::setOverlayGlyphSizeDp,
+                                    onSetOverlayShowGlyphSequence = viewModel::setOverlayShowGlyphSequence,
+                                    onSetOverlaySequenceHideDelayAfterAutoDrawSec = viewModel::setOverlaySequenceHideDelayAfterAutoDrawSec,
+                                    onSetOverlaySequenceHideDelayAfterRecognitionOnlySec = viewModel::setOverlaySequenceHideDelayAfterRecognitionOnlySec,
                                     onSetOverlayVerticalSpacingDp = viewModel::setOverlayVerticalSpacingDp,
                                     onSetOverlayOpacityPercent = viewModel::setOverlayOpacityPercent,
                                     onSetCommandOpenHideSlowOption = viewModel::setCommandOpenHideSlowOption,
@@ -882,22 +913,23 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         Shizuku.removeBinderReceivedListener(shizukuBinderListener)
+        Shizuku.removeRequestPermissionResultListener(shizukuPermissionResultListener)
         super.onDestroy()
     }
 
-    private fun attemptAutoGrantOnLaunch(force: Boolean = false) {
-        if ((!force && autoGrantLaunchFinished) || autoGrantInProgress) {
+    private fun attemptAutoGrantOnLaunch(ignoreLaunchFinishedGuard: Boolean = false) {
+        if ((!ignoreLaunchFinishedGuard && autoGrantLaunchFinished) || autoGrantInProgress) {
             Log.d(
                 LOG_TAG,
-                "[AUTO_A11Y] Skip attempt: force=$force finished=$autoGrantLaunchFinished inProgress=$autoGrantInProgress",
+                "[AUTO_A11Y] Skip attempt: ignoreLaunchFinishedGuard=$ignoreLaunchFinishedGuard finished=$autoGrantLaunchFinished inProgress=$autoGrantInProgress",
             )
             return
         }
-        Log.d(LOG_TAG, "[AUTO_A11Y] Trigger attempt on launch force=$force")
+        Log.d(LOG_TAG, "[AUTO_A11Y] Trigger attempt ignoreLaunchFinishedGuard=$ignoreLaunchFinishedGuard")
         lifecycleScope.launch {
             val result = maybeAutoGrantAccessibilityViaShizuku(viewModel.settings.value)
             Log.d(LOG_TAG, "[AUTO_A11Y] Attempt result=$result")
-            if (!force && result != null && result != ShizukuAccessibilityHelper.Result.SHIZUKU_NOT_READY) {
+            if (!ignoreLaunchFinishedGuard && result != null && result != ShizukuAccessibilityHelper.Result.SHIZUKU_NOT_READY) {
                 autoGrantLaunchFinished = true
             }
         }
@@ -967,6 +999,8 @@ private fun MainPage(
     modifier: Modifier,
     permissions: PermissionSnapshot,
     runtime: RuntimeState,
+    autoInputEnabled: Boolean,
+    accessibilityCaptureEnabled: Boolean,
     overlayVisible: Boolean,
     recognitionRunning: Boolean,
     onRequestOverlayPermission: () -> Unit,
@@ -975,6 +1009,16 @@ private fun MainPage(
     onToggleCapture: () -> Unit,
     onQuickStart: () -> Unit,
 ) {
+    val accessibilityNeedsWarning = !permissions.accessibilityGranted &&
+        (accessibilityCaptureEnabled || autoInputEnabled)
+    val disableOverlayToggle = !overlayVisible && !permissions.overlayGranted
+    val disableCaptureToggle = !recognitionRunning && (
+        (autoInputEnabled && !permissions.accessibilityGranted) ||
+            (!autoInputEnabled && !permissions.overlayGranted)
+        )
+    val disableQuickStart = !permissions.overlayGranted &&
+        (!autoInputEnabled || !permissions.accessibilityGranted)
+
     Column(
         modifier = modifier
             .padding(16.dp)
@@ -987,24 +1031,64 @@ private fun MainPage(
             fontWeight = FontWeight.Bold,
         )
 
-        Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF1A2030))) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1A2030)),
+        ) {
             Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("权限与服务", color = Color(0xFFE5EEFF), fontWeight = FontWeight.Bold)
-                PermissionRow("悬浮窗权限", permissions.overlayGranted, "去授权", onRequestOverlayPermission)
-                PermissionRow("辅助功能", permissions.accessibilityGranted, "去设置", onRequestAccessibility)
-
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = onToggleOverlay) { Text(if (overlayVisible) "隐藏" else "显示") }
-                    Button(onClick = onToggleCapture) { Text(if (recognitionRunning) "停止识别" else "开始识别") }
-                }
-                Button(onClick = onQuickStart, modifier = Modifier.fillMaxWidth()) { Text("一键启动（悬浮窗 + 识别）") }
+                PermissionRow(
+                    title = "悬浮窗权限",
+                    granted = permissions.overlayGranted,
+                    onClick = onRequestOverlayPermission,
+                )
+                PermissionRow(
+                    title = "辅助功能",
+                    granted = permissions.accessibilityGranted,
+                    warning = accessibilityNeedsWarning,
+                    onClick = onRequestAccessibility,
+                )
             }
         }
 
-        Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF11222C))) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF172A36)),
+        ) {
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = onToggleOverlay,
+                        enabled = !disableOverlayToggle,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(if (overlayVisible) "隐藏悬浮窗" else "显示悬浮窗")
+                    }
+                    Button(
+                        onClick = onToggleCapture,
+                        enabled = !disableCaptureToggle,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(if (recognitionRunning) "停止识别" else "开始识别")
+                    }
+                }
+                Button(
+                    onClick = onQuickStart,
+                    enabled = !disableQuickStart,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("一键启动（悬浮窗 + 识别）")
+                }
+            }
+        }
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF11222C)),
+        ) {
             Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("运行状态", color = Color(0xFFCAF5FF), fontWeight = FontWeight.Bold)
-                Text("状态: ${runtime.phase} | 运行: ${runtime.captureRunning}", color = Color(0xFFAEDBE8), fontSize = 12.sp)
+                Text("状态: ${runtime.phase} | 识别: $recognitionRunning", color = Color(0xFFAEDBE8), fontSize = 12.sp)
                 Text("当前: ${runtime.currentGlyph ?: "-"} | ${(runtime.confidence * 100).toInt()}%", color = Color(0xFFAEDBE8), fontSize = 12.sp)
                 if (runtime.sequence.isNotEmpty()) {
                     Text("序列: ${runtime.sequence.joinToString(" > ")}", color = Color(0xFFE4FDFF), fontSize = 12.sp)
@@ -1549,6 +1633,9 @@ private fun OverlaySettingsPage(
     onSetOverlayYRatio: (Float) -> Unit,
     onSetOverlayScaleFactor: (Float) -> Unit,
     onSetOverlayGlyphSizeDp: (Float) -> Unit,
+    onSetOverlayShowGlyphSequence: (Boolean) -> Unit,
+    onSetOverlaySequenceHideDelayAfterAutoDrawSec: (Float) -> Unit,
+    onSetOverlaySequenceHideDelayAfterRecognitionOnlySec: (Float) -> Unit,
     onSetOverlayVerticalSpacingDp: (Float) -> Unit,
     onSetOverlayOpacityPercent: (Float) -> Unit,
     onSetCommandOpenHideSlowOption: (Boolean) -> Unit,
@@ -1597,6 +1684,30 @@ private fun OverlaySettingsPage(
                     snapStep = 0.1f,
                     description = "悬浮窗底部 glyph 序列每个图标的边长。",
                     onChange = onSetOverlayGlyphSizeDp,
+                )
+                SettingSwitch(
+                    label = "显示识别到的 Glyph 序列",
+                    checked = settings.overlayShowGlyphSequence,
+                    description = "关闭后悬浮窗不再显示底部序列行。",
+                    onCheckedChange = onSetOverlayShowGlyphSequence,
+                )
+                SettingSlider(
+                    label = "自动绘制结束后隐藏序列 ${settings.overlaySequenceHideDelayAfterAutoDrawSec.format1()}s",
+                    value = settings.overlaySequenceHideDelayAfterAutoDrawSec,
+                    valueRange = 0f..20f,
+                    snapStep = 0.5f,
+                    description = "自动绘制结束进入 IDLE 后，序列保留显示时长。0s 表示立即隐藏。",
+                    onChange = onSetOverlaySequenceHideDelayAfterAutoDrawSec,
+                    enabled = settings.overlayShowGlyphSequence,
+                )
+                SettingSlider(
+                    label = "仅识图结束后隐藏序列 ${settings.overlaySequenceHideDelayAfterRecognitionOnlySec.format1()}s",
+                    value = settings.overlaySequenceHideDelayAfterRecognitionOnlySec,
+                    valueRange = 0f..20f,
+                    snapStep = 0.5f,
+                    description = "仅识图结束进入 IDLE 后，序列保留显示时长（仅在“启用输入”关闭时生效）。0s 表示立即隐藏。",
+                    onChange = onSetOverlaySequenceHideDelayAfterRecognitionOnlySec,
+                    enabled = settings.overlayShowGlyphSequence,
                 )
                 SettingSlider(
                     label = "悬浮窗上下间隔 ${settings.overlayVerticalSpacingDp.format1()}dp",
@@ -1791,21 +1902,36 @@ private fun PreviewImageFitWidth(
 @Composable
 private fun PermissionRow(
     title: String,
-    enabled: Boolean,
-    actionText: String,
+    granted: Boolean,
+    warning: Boolean = false,
     onClick: () -> Unit,
 ) {
+    val statusText = if (granted) "已授权" else "未授权"
+    val statusColor = when {
+        granted -> Color(0xFFAEEFC1)
+        warning -> Color(0xFFFF5F5F)
+        else -> Color(0xFFFF5F5F)
+    }
+    val actionText = if (granted) "已授权" else "授权"
+    val actionColors = if (granted) {
+        ButtonDefaults.buttonColors(
+            containerColor = Color(0xFF4B5563),
+            contentColor = Color(0xFFAAB3BF),
+        )
+    } else {
+        ButtonDefaults.buttonColors()
+    }
+
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Text(
-            text = "$title: ${if (enabled) "已授权" else "未授权"}",
-            color = if (enabled) Color(0xFFAEEFC1) else Color(0xFFFFB7B7),
-            fontSize = 13.sp,
-        )
-        Button(onClick = onClick) { Text(actionText) }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(text = "$title: ", color = Color(0xFFD6E6F2), fontSize = 13.sp)
+            Text(text = statusText, color = statusColor, fontSize = 13.sp)
+        }
+        Button(onClick = onClick, colors = actionColors) { Text(actionText) }
     }
 }
 
@@ -1814,20 +1940,23 @@ private fun SettingSwitch(
     label: String,
     checked: Boolean,
     description: String? = null,
+    enabled: Boolean = true,
     onCheckedChange: (Boolean) -> Unit,
 ) {
+    val labelColor = if (enabled) Color(0xFFD5F4DA) else Color(0xFF73828A)
+    val descriptionColor = if (enabled) Color(0xFF9EB5C0) else Color(0xFF5F6C75)
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(label, color = Color(0xFFD5F4DA), fontSize = 12.sp)
+            Text(label, color = labelColor, fontSize = 12.sp)
             if (!description.isNullOrBlank()) {
-                Text(description, color = Color(0xFF9EB5C0), fontSize = 11.sp)
+                Text(description, color = descriptionColor, fontSize = 11.sp)
             }
         }
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
     }
 }
 
@@ -1839,15 +1968,19 @@ private fun SettingSlider(
     steps: Int = 0,
     snapStep: Float = 0f,
     description: String? = null,
+    enabled: Boolean = true,
     onChange: (Float) -> Unit,
 ) {
+    val labelColor = if (enabled) Color(0xFFD5F4DA) else Color(0xFF73828A)
+    val descriptionColor = if (enabled) Color(0xFF9EB5C0) else Color(0xFF5F6C75)
     val effectiveSteps = if (snapStep > 0f && steps == 0) {
         ((valueRange.endInclusive - valueRange.start) / snapStep).toInt() - 1
     } else {
         steps
     }
+    val sliderSteps = if (enabled) effectiveSteps.coerceAtLeast(0) else 0
     Column {
-        Text(label, color = Color(0xFFD5F4DA), fontSize = 12.sp)
+        Text(label, color = labelColor, fontSize = 12.sp)
         Slider(
             value = value,
             onValueChange = { raw ->
@@ -1860,18 +1993,21 @@ private fun SettingSlider(
                 }
             },
             valueRange = valueRange,
-            steps = effectiveSteps.coerceAtLeast(0),
+            enabled = enabled,
+            steps = sliderSteps,
             colors = if (effectiveSteps > 0) {
                 SliderDefaults.colors(
                     activeTickColor = Color.Transparent,
                     inactiveTickColor = Color.Transparent,
+                    disabledActiveTickColor = Color.Transparent,
+                    disabledInactiveTickColor = Color.Transparent,
                 )
             } else {
                 SliderDefaults.colors()
             },
         )
         if (!description.isNullOrBlank()) {
-            Text(description, color = Color(0xFF9EB5C0), fontSize = 11.sp)
+            Text(description, color = descriptionColor, fontSize = 11.sp)
         }
     }
 }

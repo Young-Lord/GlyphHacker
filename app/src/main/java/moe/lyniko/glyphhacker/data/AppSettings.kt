@@ -102,6 +102,12 @@ data class AppSettings(
     val overlayScaleFactor: Float = 1.0f,
     /** 悬浮窗底部 glyph 序列图标边长（dp）。 */
     val overlayGlyphSizeDp: Float = 28f,
+    /** 是否显示悬浮窗上的识别 glyph 序列。 */
+    val overlayShowGlyphSequence: Boolean = true,
+    /** 自动绘制结束后，悬浮窗序列继续显示时长（秒）。 */
+    val overlaySequenceHideDelayAfterAutoDrawSec: Float = 0f,
+    /** 自动绘制关闭时（仅识图），识图结束后序列继续显示时长（秒）。 */
+    val overlaySequenceHideDelayAfterRecognitionOnlySec: Float = 15f,
     /** 悬浮窗上下行间距（dp），默认 0。 */
     val overlayVerticalSpacingDp: Float = 0f,
     /** 悬浮窗不透明度百分比（0 = 全透明，100 = 完全不透明）。 */

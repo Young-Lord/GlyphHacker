@@ -262,6 +262,21 @@ class SettingsRepository(context: Context) {
         refresh()
     }
 
+    suspend fun updateOverlayShowGlyphSequence(show: Boolean) {
+        prefs.edit().putBoolean(KEY_OVERLAY_SHOW_GLYPH_SEQUENCE, show).apply()
+        refresh()
+    }
+
+    suspend fun updateOverlaySequenceHideDelayAfterAutoDrawSec(value: Float) {
+        prefs.edit().putFloat(KEY_OVERLAY_SEQUENCE_HIDE_DELAY_AFTER_AUTO_DRAW_SEC, value.coerceIn(0f, 20f)).apply()
+        refresh()
+    }
+
+    suspend fun updateOverlaySequenceHideDelayAfterRecognitionOnlySec(value: Float) {
+        prefs.edit().putFloat(KEY_OVERLAY_SEQUENCE_HIDE_DELAY_AFTER_RECOGNITION_ONLY_SEC, value.coerceIn(0f, 20f)).apply()
+        refresh()
+    }
+
     suspend fun updateOverlayVerticalSpacingDp(value: Float) {
         prefs.edit().putFloat(KEY_OVERLAY_VERTICAL_SPACING_DP, value.coerceIn(0f, 40f)).apply()
         refresh()
@@ -421,6 +436,15 @@ class SettingsRepository(context: Context) {
             val waitGoTimeoutMs = config.optLong("waitGoTimeoutMs", 5000L)
             val overlayScaleFactor = config.optDouble("overlayScaleFactor", 1.0).toFloat()
             val overlayGlyphSizeDp = config.optDouble("overlayGlyphSizeDp", 28.0).toFloat()
+            val overlayShowGlyphSequence = config.optBoolean("overlayShowGlyphSequence", true)
+            val overlaySequenceHideDelayAfterAutoDrawSec = config.optDouble(
+                "overlaySequenceHideDelayAfterAutoDrawSec",
+                0.0,
+            ).toFloat()
+            val overlaySequenceHideDelayAfterRecognitionOnlySec = config.optDouble(
+                "overlaySequenceHideDelayAfterRecognitionOnlySec",
+                15.0,
+            ).toFloat()
             val overlayVerticalSpacingDp = config.optDouble("overlayVerticalSpacingDp", 0.0).toFloat()
             val overlayOpacityPercent = config.optDouble("overlayOpacityPercent", 100.0).toFloat()
             val overlayHideCommandButtons = config.optBoolean("overlayHideCommandButtons", false)
@@ -476,6 +500,15 @@ class SettingsRepository(context: Context) {
                 .putLong(KEY_WAIT_GO_TIMEOUT_MS, waitGoTimeoutMs.coerceIn(0L, 30000L))
                 .putFloat(KEY_OVERLAY_SCALE_FACTOR, overlayScaleFactor.coerceIn(0.5f, 3.0f))
                 .putFloat(KEY_OVERLAY_GLYPH_SIZE_DP, overlayGlyphSizeDp.coerceIn(12f, 80f))
+                .putBoolean(KEY_OVERLAY_SHOW_GLYPH_SEQUENCE, overlayShowGlyphSequence)
+                .putFloat(
+                    KEY_OVERLAY_SEQUENCE_HIDE_DELAY_AFTER_AUTO_DRAW_SEC,
+                    overlaySequenceHideDelayAfterAutoDrawSec.coerceIn(0f, 20f),
+                )
+                .putFloat(
+                    KEY_OVERLAY_SEQUENCE_HIDE_DELAY_AFTER_RECOGNITION_ONLY_SEC,
+                    overlaySequenceHideDelayAfterRecognitionOnlySec.coerceIn(0f, 20f),
+                )
                 .putFloat(KEY_OVERLAY_VERTICAL_SPACING_DP, overlayVerticalSpacingDp.coerceIn(0f, 40f))
                 .putFloat(KEY_OVERLAY_OPACITY_PERCENT, overlayOpacityPercent.coerceIn(0f, 100f))
                 .putBoolean(KEY_OVERLAY_HIDE_COMMAND_BUTTONS, overlayHideCommandButtons)
@@ -561,6 +594,13 @@ class SettingsRepository(context: Context) {
             waitGoTimeoutMs = prefs.getLong(KEY_WAIT_GO_TIMEOUT_MS, 5000L).coerceIn(0L, 30000L),
             overlayScaleFactor = prefs.getFloat(KEY_OVERLAY_SCALE_FACTOR, 1.0f).coerceIn(0.5f, 3.0f),
             overlayGlyphSizeDp = prefs.getFloat(KEY_OVERLAY_GLYPH_SIZE_DP, 28f).coerceIn(12f, 80f),
+            overlayShowGlyphSequence = prefs.getBoolean(KEY_OVERLAY_SHOW_GLYPH_SEQUENCE, true),
+            overlaySequenceHideDelayAfterAutoDrawSec = prefs
+                .getFloat(KEY_OVERLAY_SEQUENCE_HIDE_DELAY_AFTER_AUTO_DRAW_SEC, 0f)
+                .coerceIn(0f, 20f),
+            overlaySequenceHideDelayAfterRecognitionOnlySec = prefs
+                .getFloat(KEY_OVERLAY_SEQUENCE_HIDE_DELAY_AFTER_RECOGNITION_ONLY_SEC, 15f)
+                .coerceIn(0f, 20f),
             overlayVerticalSpacingDp = prefs.getFloat(KEY_OVERLAY_VERTICAL_SPACING_DP, 0f).coerceIn(0f, 40f),
             overlayOpacityPercent = prefs.getFloat(KEY_OVERLAY_OPACITY_PERCENT, 100f).coerceIn(0f, 100f),
             overlayHideCommandButtons = prefs.getBoolean(KEY_OVERLAY_HIDE_COMMAND_BUTTONS, false),
@@ -615,6 +655,9 @@ class SettingsRepository(context: Context) {
         const val KEY_WAIT_GO_TIMEOUT_MS = "wait_go_timeout_ms"
         const val KEY_OVERLAY_SCALE_FACTOR = "overlay_scale_factor"
         const val KEY_OVERLAY_GLYPH_SIZE_DP = "overlay_glyph_size_dp"
+        const val KEY_OVERLAY_SHOW_GLYPH_SEQUENCE = "overlay_show_glyph_sequence"
+        const val KEY_OVERLAY_SEQUENCE_HIDE_DELAY_AFTER_AUTO_DRAW_SEC = "overlay_sequence_hide_delay_after_auto_draw_sec"
+        const val KEY_OVERLAY_SEQUENCE_HIDE_DELAY_AFTER_RECOGNITION_ONLY_SEC = "overlay_sequence_hide_delay_after_recognition_only_sec"
         const val KEY_OVERLAY_VERTICAL_SPACING_DP = "overlay_vertical_spacing_dp"
         const val KEY_OVERLAY_OPACITY_PERCENT = "overlay_opacity_percent"
         const val KEY_OVERLAY_HIDE_COMMAND_BUTTONS = "overlay_hide_command_buttons"
@@ -841,6 +884,15 @@ private fun AppSettings.toJson(): JSONObject {
     json.put("waitGoTimeoutMs", waitGoTimeoutMs)
     json.put("overlayScaleFactor", overlayScaleFactor.toDouble())
     json.put("overlayGlyphSizeDp", overlayGlyphSizeDp.toDouble())
+    json.put("overlayShowGlyphSequence", overlayShowGlyphSequence)
+    json.put(
+        "overlaySequenceHideDelayAfterAutoDrawSec",
+        overlaySequenceHideDelayAfterAutoDrawSec.toDouble(),
+    )
+    json.put(
+        "overlaySequenceHideDelayAfterRecognitionOnlySec",
+        overlaySequenceHideDelayAfterRecognitionOnlySec.toDouble(),
+    )
     json.put("overlayVerticalSpacingDp", overlayVerticalSpacingDp.toDouble())
     json.put("overlayOpacityPercent", overlayOpacityPercent.toDouble())
     json.put("overlayHideCommandButtons", overlayHideCommandButtons)

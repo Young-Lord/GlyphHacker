@@ -113,6 +113,10 @@ object ShizukuAccessibilityHelper {
         return Result.APPLY_SECURE_SETTINGS_FAILED
     }
 
+    fun isPermissionRequestCode(requestCode: Int): Boolean {
+        return requestCode == SHIZUKU_PERMISSION_REQUEST_CODE
+    }
+
     private fun isShizukuReady(): Boolean {
         return runCatching {
             Shizuku.pingBinder()
