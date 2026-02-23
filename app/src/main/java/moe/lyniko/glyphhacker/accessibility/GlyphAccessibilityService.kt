@@ -159,6 +159,8 @@ class GlyphAccessibilityService : AccessibilityService() {
                     sourceFrameId = command.sourceFrameId,
                     doneButtonTapped = false,
                     isCommandOpenPreset = command.isCommandOpenPreset,
+                    sequenceDrawCompleted = false,
+                    autoTapDoneAfterDraw = command.tapDoneButtonAfterDraw,
                 )
             )
             return
@@ -288,7 +290,8 @@ class GlyphAccessibilityService : AccessibilityService() {
             RuntimeStateBus.setDrawRemainingCount((command.glyphNames.size - glyphIndex - 1).coerceAtLeast(0))
         }
 
-        val shouldTapDoneButton = command.tapDoneButtonAfterDraw && allGlyphsDrawn && failedStrokeCount == 0 && dispatchedStrokeCount > 0
+        val sequenceDrawCompleted = allGlyphsDrawn && failedStrokeCount == 0 && dispatchedStrokeCount > 0
+        val shouldTapDoneButton = command.tapDoneButtonAfterDraw && sequenceDrawCompleted
         if (command.tapDoneButtonAfterDraw && !shouldTapDoneButton) {
             Log.w(
                 LOG_TAG,
@@ -305,6 +308,8 @@ class GlyphAccessibilityService : AccessibilityService() {
                 sourceFrameId = command.sourceFrameId,
                 doneButtonTapped = doneButtonTapped,
                 isCommandOpenPreset = command.isCommandOpenPreset,
+                sequenceDrawCompleted = sequenceDrawCompleted,
+                autoTapDoneAfterDraw = command.tapDoneButtonAfterDraw,
             )
         )
         RuntimeStateBus.setDrawRemainingCount(0)

@@ -29,6 +29,8 @@ data class DrawCompletion(
     val sourceFrameId: Long,
     val doneButtonTapped: Boolean,
     val isCommandOpenPreset: Boolean,
+    val sequenceDrawCompleted: Boolean,
+    val autoTapDoneAfterDraw: Boolean,
     val completedAtElapsedMs: Long = SystemClock.elapsedRealtime(),
 )
 

@@ -236,7 +236,18 @@ class CaptureForegroundService : Service() {
                     )
                     return@collectLatest
                 }
-                if (!completion.doneButtonTapped) {
+                if (!completion.sequenceDrawCompleted) {
+                    Log.w(
+                        LOG_TAG,
+                        "[CAPTURE][F${completion.sourceFrameId}] draw completion ignored: sequence not fully drawn",
+                    )
+                    return@collectLatest
+                }
+                if (completion.autoTapDoneAfterDraw && !completion.doneButtonTapped) {
+                    Log.w(
+                        LOG_TAG,
+                        "[CAPTURE][F${completion.sourceFrameId}] waiting for DONE tap before AUTO_DRAW -> IDLE",
+                    )
                     return@collectLatest
                 }
                 recognitionEngine.resetSession()
@@ -246,7 +257,7 @@ class CaptureForegroundService : Service() {
                 commandPresetDrawInProgress = false
                 Log.i(
                     LOG_TAG,
-                    "[CAPTURE][F${completion.sourceFrameId}] done tap confirmed; reset to IDLE immediately",
+                    "[CAPTURE][F${completion.sourceFrameId}] draw sequence completed; reset to IDLE",
                 )
             }
         }

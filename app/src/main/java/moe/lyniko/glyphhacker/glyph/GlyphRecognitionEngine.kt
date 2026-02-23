@@ -11,6 +11,7 @@ class GlyphRecognitionEngine {
 
     private companion object {
         private const val LOG_TAG = "GlyphHacker"
+        private const val WAIT_GO_EMPTY_SEQUENCE_IDLE_LUMA = 18f
     }
 
     data class SessionState(
@@ -315,7 +316,13 @@ class GlyphRecognitionEngine {
 
         if (!drawTriggered) {
             if (waitGoSeen && firstBoxRect != null) {
-                if (firstBoxLuma >= firstBoxBaselineLuma + settings.goColorDeltaThreshold) {
+                if (sequence.isEmpty() && firstBoxLuma >= WAIT_GO_EMPTY_SEQUENCE_IDLE_LUMA) {
+                    Log.w(
+                        LOG_TAG,
+                        "[ENGINE][F$frameId] WAIT_GO firstBoxLuma=$firstBoxLuma but sequence is empty; reset to IDLE",
+                    )
+                    resetForNextRound()
+                } else if (firstBoxLuma >= firstBoxBaselineLuma + settings.goColorDeltaThreshold) {
                     if (sequence.isNotEmpty()) {
                         drawRequested = true
                         drawTriggered = true
@@ -333,16 +340,17 @@ class GlyphRecognitionEngine {
             }
         }
 
-        if (drawTriggered) {
-            if (activeEdges.isEmpty()) {
-                quietFramesAfterDraw += 1
-                if (quietFramesAfterDraw > 20) {
-                    resetForNextRound()
-                }
-            } else {
-                quietFramesAfterDraw = 0
-            }
+        if (drawTriggered && sequence.isEmpty()) {
+            Log.w(
+                LOG_TAG,
+                "[ENGINE][F$frameId] AUTO_DRAW with empty sequence; reset to IDLE",
+            )
+            resetForNextRound()
+        } else if (!drawTriggered && quietFramesAfterDraw != 0) {
+            quietFramesAfterDraw = 0
         }
+
+        val goMatched = waitGoSeen && readyIndicatorsVisible
 
         val snapshot = GlyphSnapshot(
             phase = phase,
@@ -351,7 +359,7 @@ class GlyphRecognitionEngine {
             sequence = sequence.toList(),
             activeEdges = activeEdges,
             edgeEvidence = edgeEvidence,
-            goMatched = waitGoEligible,
+            goMatched = goMatched,
             drawRequested = drawRequested,
             debugNodes = nodes,
             debugFrameWidth = bitmap.width,
@@ -375,7 +383,7 @@ class GlyphRecognitionEngine {
         if (shouldLogFrame) {
             Log.d(
                 LOG_TAG,
-                "[ENGINE][F$frameId] total=${totalDurationMs}ms prep=${prepDurationMs}ms luma=${lumaDurationMs}ms edge=${edgeDurationMs}ms probe=${probeDurationMs}ms phase=${snapshot.phase} glyph=${snapshot.currentGlyph ?: "-"} conf=${snapshot.currentConfidence} activeEdges=${snapshot.activeEdges.size} seq=${formatSequence(snapshot.sequence)} waitGo=$waitGoEligible go=${snapshot.goMatched} draw=${snapshot.drawRequested}",
+                "[ENGINE][F$frameId] total=${totalDurationMs}ms prep=${prepDurationMs}ms luma=${lumaDurationMs}ms edge=${edgeDurationMs}ms probe=${probeDurationMs}ms phase=${snapshot.phase} glyph=${snapshot.currentGlyph ?: "-"} conf=${snapshot.currentConfidence} activeEdges=${snapshot.activeEdges.size} seq=${formatSequence(snapshot.sequence)} waitGo=$waitGoSeen go=${snapshot.goMatched} draw=${snapshot.drawRequested}",
             )
         }
         if (snapshot.phase != previousPhase) {
