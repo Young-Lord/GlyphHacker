@@ -57,6 +57,7 @@ data class AppSettings(
     val recognitionMode: RecognitionMode = RecognitionMode.EDGE_SET,
     val useAccessibilityScreenshotCapture: Boolean = false,
     val autoGrantAccessibilityViaShizukuOnLaunch: Boolean = false,
+    val autoQuickStartOnColdLaunch: Boolean = false,
     val idleFrameIntervalMs: Long = 500L,
     val nonIdleFrameIntervalMs: Long = 120L,
     val debugPlaybackSpeed: Float = 1.0f,

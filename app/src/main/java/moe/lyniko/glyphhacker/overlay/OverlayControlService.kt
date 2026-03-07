@@ -168,7 +168,7 @@ class OverlayControlService : Service() {
                 if (!captureRunning) {
                     if (shouldUseAccessibilityScreenshotCapture()) {
                         if (isAccessibilityServiceEnabled()) {
-                            RuntimeStateBus.setRecognitionEnabled(true)
+                            RuntimeStateBus.setRecognitionEnabled(true, context = this@OverlayControlService)
                             CaptureForegroundService.startAccessibility(this@OverlayControlService)
                         } else {
                             Toast.makeText(
@@ -181,7 +181,7 @@ class OverlayControlService : Service() {
                         requestProjectionPermission(MainActivity.PROJECTION_ACTION_START_CAPTURE)
                     }
                 } else {
-                    RuntimeStateBus.setRecognitionEnabled(!recognitionEnabled)
+                    RuntimeStateBus.setRecognitionEnabled(!recognitionEnabled, context = this@OverlayControlService)
                 }
             }
             setOnLongClickListener {
@@ -440,7 +440,7 @@ class OverlayControlService : Service() {
     private fun restartCaptureService() {
         if (shouldUseAccessibilityScreenshotCapture()) {
             if (isAccessibilityServiceEnabled()) {
-                RuntimeStateBus.setRecognitionEnabled(true)
+                RuntimeStateBus.setRecognitionEnabled(true, context = this)
                 CaptureForegroundService.restartAccessibility(this)
             } else {
                 Toast.makeText(

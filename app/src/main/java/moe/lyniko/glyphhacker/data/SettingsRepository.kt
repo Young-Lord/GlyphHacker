@@ -46,6 +46,11 @@ class SettingsRepository(context: Context) {
         refresh()
     }
 
+    suspend fun updateAutoQuickStartOnColdLaunch(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_AUTO_QUICK_START_ON_COLD_LAUNCH, enabled).apply()
+        refresh()
+    }
+
     suspend fun updateIdleFrameIntervalMs(value: Long) {
         prefs.edit().putLong(KEY_IDLE_FRAME_INTERVAL_MS, value.coerceIn(120L, 5000L)).apply()
         refresh()
@@ -353,6 +358,7 @@ class SettingsRepository(context: Context) {
                 "autoGrantAccessibilityViaShizukuOnLaunch",
                 false,
             )
+            val autoQuickStartOnColdLaunch = config.optBoolean("autoQuickStartOnColdLaunch", false)
             val idleFrameInterval = config.optLong(
                 "idleFrameIntervalMs",
                 config.optLong("frameIntervalMs", 500L),
@@ -460,6 +466,7 @@ class SettingsRepository(context: Context) {
                     KEY_AUTO_GRANT_ACCESSIBILITY_VIA_SHIZUKU_ON_LAUNCH,
                     autoGrantAccessibilityViaShizukuOnLaunch,
                 )
+                .putBoolean(KEY_AUTO_QUICK_START_ON_COLD_LAUNCH, autoQuickStartOnColdLaunch)
                 .putLong(KEY_IDLE_FRAME_INTERVAL_MS, idleFrameInterval.coerceIn(120L, 5000L))
                 .putLong(KEY_NON_IDLE_FRAME_INTERVAL_MS, nonIdleFrameInterval.coerceIn(30L, 1000L))
                 .putFloat(KEY_DEBUG_PLAYBACK_SPEED, debugPlaybackSpeed.coerceIn(0.25f, 4.0f))
@@ -546,6 +553,10 @@ class SettingsRepository(context: Context) {
                 KEY_AUTO_GRANT_ACCESSIBILITY_VIA_SHIZUKU_ON_LAUNCH,
                 false,
             ),
+            autoQuickStartOnColdLaunch = prefs.getBoolean(
+                KEY_AUTO_QUICK_START_ON_COLD_LAUNCH,
+                false,
+            ),
             idleFrameIntervalMs = prefs.getLong(
                 KEY_IDLE_FRAME_INTERVAL_MS,
                 prefs.getLong(KEY_FRAME_INTERVAL_MS, 500L),
@@ -613,6 +624,7 @@ class SettingsRepository(context: Context) {
         const val KEY_RECOGNITION_MODE = "recognition_mode"
         const val KEY_USE_ACCESSIBILITY_SCREENSHOT_CAPTURE = "use_accessibility_screenshot_capture"
         const val KEY_AUTO_GRANT_ACCESSIBILITY_VIA_SHIZUKU_ON_LAUNCH = "auto_grant_accessibility_via_shizuku_on_launch"
+        const val KEY_AUTO_QUICK_START_ON_COLD_LAUNCH = "auto_quick_start_on_cold_launch"
         const val KEY_IDLE_FRAME_INTERVAL_MS = "idle_frame_interval_ms"
         const val KEY_NON_IDLE_FRAME_INTERVAL_MS = "non_idle_frame_interval_ms"
         const val KEY_FRAME_INTERVAL_MS = "frame_interval_ms"
@@ -838,6 +850,7 @@ private fun AppSettings.toJson(): JSONObject {
     json.put("recognitionMode", recognitionMode.name)
     json.put("useAccessibilityScreenshotCapture", useAccessibilityScreenshotCapture)
     json.put("autoGrantAccessibilityViaShizukuOnLaunch", autoGrantAccessibilityViaShizukuOnLaunch)
+    json.put("autoQuickStartOnColdLaunch", autoQuickStartOnColdLaunch)
     json.put("idleFrameIntervalMs", idleFrameIntervalMs)
     json.put("nonIdleFrameIntervalMs", nonIdleFrameIntervalMs)
     json.put("frameIntervalMs", idleFrameIntervalMs)

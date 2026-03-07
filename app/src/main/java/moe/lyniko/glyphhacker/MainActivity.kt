@@ -104,6 +104,7 @@ import moe.lyniko.glyphhacker.glyph.GlyphSnapshot
 import moe.lyniko.glyphhacker.glyph.NodePosition
 import moe.lyniko.glyphhacker.glyph.ProbeRect
 import moe.lyniko.glyphhacker.overlay.OverlayControlService
+import moe.lyniko.glyphhacker.quicksettings.TileListeningStateRequester
 import moe.lyniko.glyphhacker.ui.MainViewModel
 import moe.lyniko.glyphhacker.ui.theme.GlyphHackerTheme
 import moe.lyniko.glyphhacker.util.base64ToBitmap
@@ -124,6 +125,8 @@ class MainActivity : ComponentActivity() {
     private val externalProjectionAction = MutableStateFlow<ProjectionGrantAction?>(null)
     private var autoGrantInProgress = false
     private var autoGrantLaunchFinished = false
+    private var autoQuickStartPendingForColdLaunch = false
+    private var autoQuickStartTriggered = false
     private val shizukuBinderListener = Shizuku.OnBinderReceivedListener {
         Log.d(LOG_TAG, "[AUTO_A11Y] Received Shizuku binder")
         attemptAutoGrantOnLaunch()
@@ -163,13 +166,19 @@ class MainActivity : ComponentActivity() {
         const val PROJECTION_ACTION_RESTART_CAPTURE = "restart_capture"
         const val PROJECTION_ACTION_START_OVERLAY = "start_overlay"
         const val PROJECTION_ACTION_QUICK_START = "quick_start"
+        private var hasHandledColdLaunchInProcess = false
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        if (!hasHandledColdLaunchInProcess) {
+            autoQuickStartPendingForColdLaunch = true
+            hasHandledColdLaunchInProcess = true
+        }
         refreshPermissionState()
         consumeProjectionActionIntent(intent)
+        TileListeningStateRequester.requestRecognitionTileListeningState(this)
         Log.d(LOG_TAG, "[AUTO_A11Y] onCreate, register binder listener")
         Shizuku.addBinderReceivedListener(shizukuBinderListener)
         Shizuku.addRequestPermissionResultListener(shizukuPermissionResultListener)
@@ -280,7 +289,7 @@ class MainActivity : ComponentActivity() {
                 }
 
                 fun startCaptureInternal(permission: ProjectionPermission) {
-                    RuntimeStateBus.setRecognitionEnabled(true)
+                    RuntimeStateBus.setRecognitionEnabled(true, context = context)
                     CaptureForegroundService.start(context, permission)
                     refreshPermissionState()
                 }
@@ -291,7 +300,7 @@ class MainActivity : ComponentActivity() {
                         context.toast("辅助功能未授权，无法开始识别，请先在系统设置中开启")
                         return false
                     }
-                    RuntimeStateBus.setRecognitionEnabled(true)
+                    RuntimeStateBus.setRecognitionEnabled(true, context = context)
                     CaptureForegroundService.startAccessibility(context)
                     refreshPermissionState()
                     return true
@@ -306,7 +315,7 @@ class MainActivity : ComponentActivity() {
                         ProjectionGrantAction.START_OVERLAY -> startOverlayInternal()
                         ProjectionGrantAction.START_CAPTURE -> startCaptureInternal(permission)
                         ProjectionGrantAction.RESTART_CAPTURE -> {
-                            RuntimeStateBus.setRecognitionEnabled(true)
+                            RuntimeStateBus.setRecognitionEnabled(true, context = context)
                             CaptureForegroundService.restart(context, permission)
                             refreshPermissionState()
                         }
@@ -347,10 +356,53 @@ class MainActivity : ComponentActivity() {
                     requestProjection.launch(projectionManager.createScreenCaptureIntent())
                 }
 
+                fun performQuickStart(
+                    currentPermissions: PermissionSnapshot = permissions,
+                    currentRuntime: RuntimeState = runtime,
+                ) {
+                    val shouldStartOverlay = currentPermissions.overlayGranted
+                    if (canUseAccessibilityScreenshotCapture()) {
+                        if (startAccessibilityScreenshotCaptureInternal() && shouldStartOverlay) {
+                            startOverlayInternal()
+                        }
+                    } else {
+                        if (currentRuntime.captureRunning) {
+                            RuntimeStateBus.setRecognitionEnabled(true, context = context)
+                            if (shouldStartOverlay) {
+                                startOverlayInternal()
+                            }
+                        } else {
+                            requestProjectionFor(
+                                if (shouldStartOverlay) {
+                                    ProjectionGrantAction.QUICK_START
+                                } else {
+                                    ProjectionGrantAction.START_CAPTURE
+                                },
+                            )
+                        }
+                    }
+                }
+
                 LaunchedEffect(externalProjectionRequest) {
                     val action = externalProjectionRequest ?: return@LaunchedEffect
                     requestProjectionFor(action)
                     this@MainActivity.externalProjectionAction.value = null
+                }
+
+                LaunchedEffect(externalProjectionRequest, settings.autoQuickStartOnColdLaunch) {
+                    if (!autoQuickStartPendingForColdLaunch || autoQuickStartTriggered) {
+                        return@LaunchedEffect
+                    }
+                    if (externalProjectionRequest != null) {
+                        autoQuickStartPendingForColdLaunch = false
+                        return@LaunchedEffect
+                    }
+                    autoQuickStartPendingForColdLaunch = false
+                    if (!settings.autoQuickStartOnColdLaunch) {
+                        return@LaunchedEffect
+                    }
+                    autoQuickStartTriggered = true
+                    performQuickStart()
                 }
 
                 val exportConfigLauncher = rememberLauncherForActivityResult(
@@ -697,38 +749,14 @@ class MainActivity : ComponentActivity() {
                                         startAccessibilityScreenshotCaptureInternal()
                                     } else {
                                         if (runtime.captureRunning) {
-                                            RuntimeStateBus.setRecognitionEnabled(true)
+                                            RuntimeStateBus.setRecognitionEnabled(true, context = context)
                                         } else {
                                             requestProjectionFor(ProjectionGrantAction.START_CAPTURE)
                                         }
                                     }
                                 }
                             },
-                            onQuickStart = {
-                                val shouldStartOverlay = permissions.overlayGranted
-                                if (canUseAccessibilityScreenshotCapture()) {
-                                    if (startAccessibilityScreenshotCaptureInternal()) {
-                                        if (shouldStartOverlay) {
-                                            startOverlayInternal()
-                                        }
-                                    }
-                                } else {
-                                    if (runtime.captureRunning) {
-                                        RuntimeStateBus.setRecognitionEnabled(true)
-                                        if (shouldStartOverlay) {
-                                            startOverlayInternal()
-                                        }
-                                    } else {
-                                        requestProjectionFor(
-                                            if (shouldStartOverlay) {
-                                                ProjectionGrantAction.QUICK_START
-                                            } else {
-                                                ProjectionGrantAction.START_CAPTURE
-                                            },
-                                        )
-                                    }
-                                }
-                            },
+                            onQuickStart = { performQuickStart() },
                         )
 
                         RootTab.SETTINGS -> {
@@ -758,6 +786,7 @@ class MainActivity : ComponentActivity() {
                                             }
                                         }
                                     },
+                                    onSetAutoQuickStartOnColdLaunch = viewModel::setAutoQuickStartOnColdLaunch,
                                     onSetIdleFrameInterval = viewModel::setIdleFrameIntervalMs,
                                     onSetNonIdleFrameInterval = viewModel::setNonIdleFrameIntervalMs,
                                 )
@@ -1188,6 +1217,7 @@ private fun ScreenRecordingSettingsPage(
     onSetRecognitionMode: (RecognitionMode) -> Unit,
     onSetUseAccessibilityScreenshotCapture: (Boolean) -> Unit,
     onSetAutoGrantAccessibilityViaShizukuOnLaunch: (Boolean) -> Unit,
+    onSetAutoQuickStartOnColdLaunch: (Boolean) -> Unit,
     onSetIdleFrameInterval: (Long) -> Unit,
     onSetNonIdleFrameInterval: (Long) -> Unit,
 ) {
@@ -1226,6 +1256,13 @@ private fun ScreenRecordingSettingsPage(
                     checked = settings.autoGrantAccessibilityViaShizukuOnLaunch,
                     description = "应用打开时自动调用 Shizuku 获取 WRITE_SECURE_SETTINGS 并尝试开启本应用无障碍。",
                     onCheckedChange = onSetAutoGrantAccessibilityViaShizukuOnLaunch,
+                )
+
+                SettingSwitch(
+                    label = "冷启动时自动执行一键启动",
+                    checked = settings.autoQuickStartOnColdLaunch,
+                    description = "仅应用冷启动时触发，行为等同主页的“一键启动（悬浮窗 + 识别）”。",
+                    onCheckedChange = onSetAutoQuickStartOnColdLaunch,
                 )
 
                 SettingSlider(

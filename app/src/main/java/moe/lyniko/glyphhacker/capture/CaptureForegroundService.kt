@@ -77,7 +77,7 @@ class CaptureForegroundService : Service() {
                 return
             }
             Log.w(LOG_TAG, "[CAPTURE] media projection stopped by system")
-            RuntimeStateBus.setRecognitionEnabled(false)
+            RuntimeStateBus.setRecognitionEnabled(false, context = this@CaptureForegroundService)
             serviceScope.launch {
                 stopSelfSafely()
             }
@@ -148,7 +148,7 @@ class CaptureForegroundService : Service() {
                     stopSelfSafely()
                     return START_NOT_STICKY
                 }
-                RuntimeStateBus.setRecognitionEnabled(true)
+                RuntimeStateBus.setRecognitionEnabled(true, context = this)
                 stopCaptureResources()
                 if (!initProjection(resultCode, permissionData)) {
                     return START_NOT_STICKY
@@ -161,7 +161,7 @@ class CaptureForegroundService : Service() {
                 if (!startAsForeground(useAccessibilityScreenshot = true)) {
                     return START_NOT_STICKY
                 }
-                RuntimeStateBus.setRecognitionEnabled(true)
+                RuntimeStateBus.setRecognitionEnabled(true, context = this)
                 useAccessibilityScreenshotMode = true
                 stopCaptureResources()
                 startAccessibilityScreenshotLoop()
@@ -175,9 +175,9 @@ class CaptureForegroundService : Service() {
                 commandPresetDrawInProgress = false
                 suppressGlyphTrackingUntilElapsedMs = 0L
                 recognitionPaused = false
-                RuntimeStateBus.setRecognitionEnabled(true)
+                RuntimeStateBus.setRecognitionEnabled(true, context = this)
                 val running = captureJob?.isActive == true && foregroundStarted
-                RuntimeStateBus.setIdle(captureRunning = running)
+                RuntimeStateBus.setIdle(captureRunning = running, context = this)
                 return START_STICKY
             }
 
@@ -187,7 +187,7 @@ class CaptureForegroundService : Service() {
                     stopSelf()
                     return START_NOT_STICKY
                 }
-                RuntimeStateBus.setRecognitionEnabled(false)
+                RuntimeStateBus.setRecognitionEnabled(false, context = this)
                 stopSelfSafely()
                 return START_NOT_STICKY
             }
@@ -203,7 +203,7 @@ class CaptureForegroundService : Service() {
         settingsJob?.cancel()
         drawCompletionJob?.cancel()
         captureJob?.cancel()
-        RuntimeStateBus.reset()
+        RuntimeStateBus.reset(context = this)
         foregroundStarted = false
         foregroundUsesAccessibilityType = false
         serviceScope.cancel()
@@ -251,7 +251,7 @@ class CaptureForegroundService : Service() {
                     return@collectLatest
                 }
                 recognitionEngine.resetSession()
-                RuntimeStateBus.setIdle()
+                RuntimeStateBus.setIdle(context = this@CaptureForegroundService)
                 lastLoggedPhase = GlyphPhase.IDLE
                 commandOpenPresetIssued = false
                 commandPresetDrawInProgress = false
@@ -380,7 +380,7 @@ class CaptureForegroundService : Service() {
 
         captureJob?.cancel()
         captureJob = serviceScope.launch {
-            RuntimeStateBus.setCaptureRunning(true)
+            RuntimeStateBus.setCaptureRunning(true, context = this@CaptureForegroundService)
             var nextDelayMs = settings.idleFrameIntervalMs.coerceIn(120L, 5000L)
             while (isActive) {
                 val frameId = ++frameCounter
@@ -474,7 +474,7 @@ class CaptureForegroundService : Service() {
 
         captureJob?.cancel()
         captureJob = serviceScope.launch {
-            RuntimeStateBus.setCaptureRunning(true)
+            RuntimeStateBus.setCaptureRunning(true, context = this@CaptureForegroundService)
             var nextDelayMs = settings.idleFrameIntervalMs.coerceIn(120L, 5000L)
             while (isActive) {
                 val frameId = ++frameCounter
@@ -597,7 +597,7 @@ class CaptureForegroundService : Service() {
             readyBoxProfile = settings.readyBoxProfile,
         )
         val processDurationMs = elapsedMs(processStartNs)
-        RuntimeStateBus.updateFromSnapshot(snapshot, captureRunning = true)
+        RuntimeStateBus.updateFromSnapshot(snapshot, captureRunning = true, context = this)
 
         // When input is disabled and AUTO_DRAW would trigger, skip directly to IDLE
         if (snapshot.drawRequested && !RuntimeStateBus.state.value.inputEnabled) {
@@ -606,7 +606,7 @@ class CaptureForegroundService : Service() {
                 "[CAPTURE][F$frameId] input disabled; skipping AUTO_DRAW -> IDLE seq=${formatSequence(snapshot.sequence)}",
             )
             recognitionEngine.resetSession()
-            RuntimeStateBus.setIdle(captureRunning = true)
+            RuntimeStateBus.setIdle(captureRunning = true, context = this)
             lastLoggedPhase = GlyphPhase.IDLE
             commandOpenPresetIssued = false
             commandPresetDrawInProgress = false
@@ -713,13 +713,13 @@ class CaptureForegroundService : Service() {
         commandOpenPresetIssued = false
         commandPresetDrawInProgress = false
         suppressGlyphTrackingUntilElapsedMs = 0L
-        RuntimeStateBus.reset()
+        RuntimeStateBus.reset(context = this)
     }
 
     private fun stopSelfSafely() {
         Log.i(LOG_TAG, "[CAPTURE] stopSelfSafely invoked")
         stopCaptureResources()
-        RuntimeStateBus.reset()
+        RuntimeStateBus.reset(context = this)
         commandOpenPresetIssued = false
         commandPresetDrawInProgress = false
         suppressGlyphTrackingUntilElapsedMs = 0L
@@ -739,7 +739,7 @@ class CaptureForegroundService : Service() {
         virtualDisplay?.release()
         virtualDisplay = null
         recognitionPaused = false
-        RuntimeStateBus.setCaptureRunning(false)
+        RuntimeStateBus.setCaptureRunning(false, context = this)
     }
 
     private fun stopCaptureResources() {

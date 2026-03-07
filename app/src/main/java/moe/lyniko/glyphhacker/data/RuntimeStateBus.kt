@@ -1,5 +1,6 @@
 package moe.lyniko.glyphhacker.data
 
+import android.content.Context
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import moe.lyniko.glyphhacker.glyph.GlyphEdge
@@ -7,6 +8,7 @@ import moe.lyniko.glyphhacker.glyph.GlyphPhase
 import moe.lyniko.glyphhacker.glyph.GlyphSnapshot
 import moe.lyniko.glyphhacker.glyph.NodePosition
 import moe.lyniko.glyphhacker.glyph.ProbeRect
+import moe.lyniko.glyphhacker.quicksettings.TileListeningStateRequester
 
 data class RuntimeState(
     val captureRunning: Boolean = false,
@@ -38,13 +40,19 @@ object RuntimeStateBus {
     private val _state = MutableStateFlow(RuntimeState())
     val state = _state.asStateFlow()
 
-    fun updateFromSnapshot(snapshot: GlyphSnapshot, captureRunning: Boolean) {
+    fun updateFromSnapshot(
+        snapshot: GlyphSnapshot,
+        captureRunning: Boolean,
+        context: Context? = null,
+    ) {
         val previousState = _state.value
         if (!previousState.recognitionEnabled) {
-            _state.value = previousState.copy(
+            val nextState = previousState.copy(
                 captureRunning = captureRunning,
                 lastUpdatedAtMs = System.currentTimeMillis(),
             )
+            _state.value = nextState
+            maybeRequestTileListeningState(previousState, nextState, context)
             return
         }
         val sequenceCount = snapshot.sequence.size
@@ -59,7 +67,7 @@ object RuntimeStateBus {
 
             else -> sequenceCount
         }
-        _state.value = RuntimeState(
+        val nextState = RuntimeState(
             captureRunning = captureRunning,
             recognitionEnabled = previousState.recognitionEnabled,
             inputEnabled = previousState.inputEnabled,
@@ -84,6 +92,8 @@ object RuntimeStateBus {
             goMatched = snapshot.goMatched,
             lastUpdatedAtMs = System.currentTimeMillis(),
         )
+        _state.value = nextState
+        maybeRequestTileListeningState(previousState, nextState, context)
     }
 
     fun setDrawRemainingCount(value: Int) {
@@ -97,10 +107,10 @@ object RuntimeStateBus {
         )
     }
 
-    fun setRecognitionEnabled(enabled: Boolean) {
+    fun setRecognitionEnabled(enabled: Boolean, context: Context? = null) {
         val current = _state.value
         val now = System.currentTimeMillis()
-        _state.value = if (enabled) {
+        val nextState = if (enabled) {
             current.copy(recognitionEnabled = true, lastUpdatedAtMs = now)
         } else {
             current.copy(
@@ -126,10 +136,15 @@ object RuntimeStateBus {
                 lastUpdatedAtMs = now,
             )
         }
+        _state.value = nextState
+        maybeRequestTileListeningState(current, nextState, context)
     }
 
-    fun setCaptureRunning(running: Boolean) {
-        _state.value = _state.value.copy(captureRunning = running, lastUpdatedAtMs = System.currentTimeMillis())
+    fun setCaptureRunning(running: Boolean, context: Context? = null) {
+        val current = _state.value
+        val nextState = current.copy(captureRunning = running, lastUpdatedAtMs = System.currentTimeMillis())
+        _state.value = nextState
+        maybeRequestTileListeningState(current, nextState, context)
     }
 
     fun setOverlayVisible(visible: Boolean) {
@@ -140,9 +155,9 @@ object RuntimeStateBus {
         _state.value = _state.value.copy(inputEnabled = enabled, lastUpdatedAtMs = System.currentTimeMillis())
     }
 
-    fun setIdle(captureRunning: Boolean = _state.value.captureRunning) {
+    fun setIdle(captureRunning: Boolean = _state.value.captureRunning, context: Context? = null) {
         val current = _state.value
-        _state.value = current.copy(
+        val nextState = current.copy(
             captureRunning = captureRunning,
             phase = GlyphPhase.IDLE,
             currentGlyph = null,
@@ -164,17 +179,40 @@ object RuntimeStateBus {
             goMatched = false,
             lastUpdatedAtMs = System.currentTimeMillis(),
         )
+        _state.value = nextState
+        maybeRequestTileListeningState(current, nextState, context)
     }
 
-    fun reset() {
-        val recognitionEnabled = _state.value.recognitionEnabled
-        val inputEnabled = _state.value.inputEnabled
-        val overlayVisible = _state.value.overlayVisible
-        _state.value = RuntimeState(
+    fun reset(context: Context? = null) {
+        val current = _state.value
+        val recognitionEnabled = current.recognitionEnabled
+        val inputEnabled = current.inputEnabled
+        val overlayVisible = current.overlayVisible
+        val nextState = RuntimeState(
             recognitionEnabled = recognitionEnabled,
             inputEnabled = inputEnabled,
             overlayVisible = overlayVisible,
             lastUpdatedAtMs = System.currentTimeMillis(),
         )
+        _state.value = nextState
+        maybeRequestTileListeningState(current, nextState, context)
+    }
+
+    private fun maybeRequestTileListeningState(
+        previous: RuntimeState,
+        next: RuntimeState,
+        context: Context?,
+    ) {
+        if (context == null) {
+            return
+        }
+        if (isRecognitionActive(previous) == isRecognitionActive(next)) {
+            return
+        }
+        TileListeningStateRequester.requestRecognitionTileListeningState(context)
+    }
+
+    private fun isRecognitionActive(runtimeState: RuntimeState): Boolean {
+        return runtimeState.captureRunning && runtimeState.recognitionEnabled
     }
 }

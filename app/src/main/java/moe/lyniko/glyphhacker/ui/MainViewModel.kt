@@ -72,6 +72,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun setAutoQuickStartOnColdLaunch(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepository.updateAutoQuickStartOnColdLaunch(enabled)
+        }
+    }
+
     fun setIdleFrameIntervalMs(value: Long) {
         viewModelScope.launch { settingsRepository.updateIdleFrameIntervalMs(value) }
     }

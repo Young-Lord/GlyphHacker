@@ -75,7 +75,7 @@ class RecognitionTileService : TileService() {
     }
 
     private fun startRecognition() {
-        RuntimeStateBus.setRecognitionEnabled(true)
+        RuntimeStateBus.setRecognitionEnabled(true, context = this)
         OverlayControlService.start(this)
 
         val settings = settingsRepository.settingsFlow.value
@@ -96,7 +96,7 @@ class RecognitionTileService : TileService() {
     }
 
     private fun stopRecognition() {
-        RuntimeStateBus.setRecognitionEnabled(false)
+        RuntimeStateBus.setRecognitionEnabled(false, context = this)
         OverlayControlService.stop(this)
         CaptureForegroundService.stop(this)
         updateTile(RuntimeState(captureRunning = false, recognitionEnabled = false))
