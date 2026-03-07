@@ -477,17 +477,11 @@ class GlyphAccessibilityService : AccessibilityService() {
 
         val midpointX = (row3RightNode.x + row4RightNode.x) * 0.5f
         val midpointY = (row3RightNode.y + row4RightNode.y) * 0.5f
-        val rayDx = midpointX - row3RightNode.x
-        val rayDy = midpointY - row3RightNode.y
         val maxX = (frameWidth - 1).toFloat().coerceAtLeast(1f)
         val maxY = (frameHeight - 1).toFloat().coerceAtLeast(1f)
         val turnX = (frameWidth * 0.5f).coerceIn(1f, maxX)
-        val turnY = if (abs(rayDx) < 1e-3f) {
-            midpointY
-        } else {
-            val t = (turnX - row3RightNode.x) / rayDx
-            (row3RightNode.y + (rayDy * t)).coerceIn(1f, maxY)
-        }
+        val delta = abs(row3RightNode.x - turnX)
+        val turnY = (row3RightNode.y + delta).coerceIn(1f, maxY)
 
         val route = if (toNode.index == IMPERFECT_ROW5_LEFT_NODE) {
             listOf(

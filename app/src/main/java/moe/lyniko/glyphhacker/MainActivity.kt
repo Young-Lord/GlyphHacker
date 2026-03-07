@@ -2059,6 +2059,8 @@ private fun DebugOverlay(result: DebugFrameResult, settings: moe.lyniko.glyphhac
                 val state = computeDrawState(
                     snapshot.sequence,
                     nodeMap,
+                    frame.width,
+                    frame.height,
                     settings.drawEdgeDurationMs,
                     settings.drawGlyphGapMs,
                     settings.drawTerminalDwellMs,
@@ -2138,6 +2140,8 @@ private data class DrawState(
 private fun computeDrawState(
     sequence: List<String>,
     nodeMap: Map<Int, NodePosition>,
+    frameWidth: Int,
+    frameHeight: Int,
     edgeDurationMs: Long,
     glyphGapMs: Long,
     terminalDwellMs: Long,
@@ -2152,7 +2156,13 @@ private fun computeDrawState(
         val definition = GlyphDictionary.findByName(glyphName) ?: continue
         val segments = GlyphPathPlanner.buildStrokeSegments(definition)
         for ((segIndex, segment) in segments.withIndex()) {
-            val waypoints = buildWaypointsForSegment(segment, nodeMap)
+            val waypoints = buildWaypointsForSegment(
+                glyphName = glyphName,
+                segment = segment,
+                nodeMap = nodeMap,
+                frameWidth = frameWidth,
+                frameHeight = frameHeight,
+            )
             if (waypoints.size < 2) continue
             val edgeCount = (segment.size - 1).coerceAtLeast(1)
             val strokeDuration = edgeCount * edgeDurationMs
@@ -2199,10 +2209,14 @@ private fun computeDrawState(
  * 与 [GlyphAccessibilityService.buildGesturePath] 的绕行逻辑保持一致：
  * - Row 3 (9↔6) 向上绕行
  * - Row 5 (8↔7) 向下绕行
+ * - Imperfect 的 8↔6 直连改为特定折线路径
  */
 private fun buildWaypointsForSegment(
+    glyphName: String,
     segment: List<Int>,
     nodeMap: Map<Int, NodePosition>,
+    frameWidth: Int,
+    frameHeight: Int,
 ): List<Pair<Float, Float>> {
     if (segment.isEmpty()) return emptyList()
     val first = nodeMap[segment.first()] ?: return emptyList()
@@ -2213,25 +2227,100 @@ private fun buildWaypointsForSegment(
         val fromNode = nodeMap[fromIdx] ?: continue
         val toNode = nodeMap[toIdx] ?: continue
         if (isCrowdedHorizontalRowLink(fromIdx, toIdx)) {
-            val goUp = isRow3Link(fromIdx, toIdx)
-            val apexX = (fromNode.x + toNode.x) * 0.5f
-            val baseY = (fromNode.y + toNode.y) * 0.5f
-            val rise = maxOf(
-                kotlin.math.abs(apexX - fromNode.x),
-                kotlin.math.abs(apexX - toNode.x),
+            waypoints += buildCrowdedHorizontalRowDetourWaypoints(
+                fromNode = fromNode,
+                toNode = toNode,
+                goUp = isRow3Link(fromIdx, toIdx),
+                frameWidth = frameWidth,
+                frameHeight = frameHeight,
             )
-            val apexY = if (goUp) baseY - rise else baseY + rise
-            waypoints += apexX to apexY
+        } else if (isImperfectDirectLink(glyphName, fromIdx, toIdx)) {
+            waypoints += buildImperfectDirectLinkDetourWaypoints(
+                toNode = toNode,
+                nodeMap = nodeMap,
+                frameWidth = frameWidth,
+                frameHeight = frameHeight,
+            )
+        } else {
+            waypoints += toNode.x to toNode.y
         }
-        waypoints += toNode.x to toNode.y
     }
     return waypoints
+}
+
+private fun buildCrowdedHorizontalRowDetourWaypoints(
+    fromNode: NodePosition,
+    toNode: NodePosition,
+    goUp: Boolean,
+    frameWidth: Int,
+    frameHeight: Int,
+): List<Pair<Float, Float>> {
+    val maxX = (frameWidth - 1).toFloat().coerceAtLeast(1f)
+    val maxY = (frameHeight - 1).toFloat().coerceAtLeast(1f)
+    val apexX = (frameWidth * 0.5f).coerceIn(1f, maxX)
+    val baseY = (fromNode.y + toNode.y) * 0.5f
+    val riseFrom = kotlin.math.abs(apexX - fromNode.x)
+    val riseTo = kotlin.math.abs(apexX - toNode.x)
+    val rise = maxOf(riseFrom, riseTo)
+    val apexY = if (goUp) {
+        (baseY - rise).coerceIn(1f, maxY)
+    } else {
+        (baseY + rise).coerceIn(1f, maxY)
+    }
+    return listOf(apexX to apexY, toNode.x to toNode.y)
+}
+
+private fun isImperfectDirectLink(glyphName: String, fromIndex: Int, toIndex: Int): Boolean {
+    if (!glyphName.equals(IMPERFECT_NAME, ignoreCase = true)) {
+        return false
+    }
+    return (fromIndex == IMPERFECT_ROW5_LEFT_NODE && toIndex == IMPERFECT_ROW3_RIGHT_NODE) ||
+        (fromIndex == IMPERFECT_ROW3_RIGHT_NODE && toIndex == IMPERFECT_ROW5_LEFT_NODE)
+}
+
+private fun buildImperfectDirectLinkDetourWaypoints(
+    toNode: NodePosition,
+    nodeMap: Map<Int, NodePosition>,
+    frameWidth: Int,
+    frameHeight: Int,
+): List<Pair<Float, Float>> {
+    val row3RightNode = nodeMap[IMPERFECT_ROW3_RIGHT_NODE] ?: return listOf(toNode.x to toNode.y)
+    val row4RightNode = nodeMap[IMPERFECT_ROW4_RIGHT_NODE] ?: return listOf(toNode.x to toNode.y)
+    val row5LeftNode = nodeMap[IMPERFECT_ROW5_LEFT_NODE] ?: return listOf(toNode.x to toNode.y)
+
+    val midpointX = (row3RightNode.x + row4RightNode.x) * 0.5f
+    val midpointY = (row3RightNode.y + row4RightNode.y) * 0.5f
+    val maxX = (frameWidth - 1).toFloat().coerceAtLeast(1f)
+    val maxY = (frameHeight - 1).toFloat().coerceAtLeast(1f)
+    val turnX = (frameWidth * 0.5f).coerceIn(1f, maxX)
+    val delta = kotlin.math.abs(row3RightNode.x - turnX)
+    val turnY = (row3RightNode.y + delta).coerceIn(1f, maxY)
+
+    val route = if (toNode.index == IMPERFECT_ROW5_LEFT_NODE) {
+        listOf(
+            midpointX to midpointY,
+            turnX to turnY,
+            row5LeftNode.x to row5LeftNode.y,
+        )
+    } else {
+        listOf(
+            turnX to turnY,
+            midpointX to midpointY,
+            row3RightNode.x to row3RightNode.y,
+        )
+    }
+
+    return route
 }
 
 private const val ROW3_LEFT_NODE = 9
 private const val ROW3_RIGHT_NODE = 6
 private const val ROW5_LEFT_NODE = 8
 private const val ROW5_RIGHT_NODE = 7
+private const val IMPERFECT_NAME = "Imperfect"
+private const val IMPERFECT_ROW3_RIGHT_NODE = 6
+private const val IMPERFECT_ROW4_RIGHT_NODE = 7
+private const val IMPERFECT_ROW5_LEFT_NODE = 8
 
 private fun isCrowdedHorizontalRowLink(fromIndex: Int, toIndex: Int): Boolean {
     return (fromIndex == ROW3_LEFT_NODE && toIndex == ROW3_RIGHT_NODE) ||
